@@ -7,6 +7,7 @@ globals [
   PL-OK
   PL-BAD
   PL-WORST
+  NB-PROVIDERS
 ]
 
 breed [consumers consumer]
@@ -31,10 +32,14 @@ to setup
   set PL-OK 0
   set PL-BAD -5
   set PL-WORST -10
+  set NB-PROVIDERS (Npg + Npo + Npi + Npb)
 
   set-default-shape turtles "circle"
   create-consumers nb-consumers[ setup-consumer ]
-  create-providers nb-providers[ setup-provider ]
+  create-providers Npg [ setup-provider 0 ] ;; good provider
+  create-providers Npo [ setup-provider 1 ] ;; ok provider
+  create-providers Npi [ setup-provider 2 ] ;; intermitent provider
+  create-providers Npb [ setup-provider 3 ] ;; bad provider
   reset-ticks
 end
 
@@ -44,14 +49,53 @@ end
 
 to go
   update-turtles
-  ask providers [ set color red ]
   ask consumers [
     get-nearby-providers
     interact-provider
   ]
+  ask providers [
+    update-mu
+    update-profile
+  ]
   tick
 end
 
+to update-mu
+  if provider-type = 0[
+    if random-float 1 < pmuC [
+      set mu-p ((random-float 5) + 5)
+      if mu-p > 10 [set mu-p 10]
+      if mu-p < 5 [set mu-p 5] ] ]
+  if provider-type = 1[
+    if random-float 1 < pmuC [
+      set mu-p (random-float 5)
+      if mu-p > 5 [set mu-p 5]
+      if mu-p < 0 [set mu-p 0] ] ]
+  if provider-type = 3[
+    if random-float 1 < pmuC [
+      set mu-p ((random-float 10) * -1)
+      if mu-p > 0 [set mu-p 0]
+      if mu-p < -10 [set mu-p -10] ] ]
+end
+
+to update-profile
+  if random-float 1 < pProfileSwitch [
+    let x random 4
+    while [ x = provider-type]
+      [set x random 4]
+    set color red - x
+    set provider-type x
+    if provider-type = 0 [
+      set mu-p ((PL-GOOD + PL-PERFECT) / 2)
+    ]
+    if provider-type = 1 [
+      set mu-p ((PL-OK + PL-GOOD) / 2)
+    ]
+    if provider-type = 3 [
+      set mu-p ((PL-WORST + PL-OK) / 2)
+    ]
+  ]
+end
 
 to setup-consumer
   set color blue
@@ -59,18 +103,31 @@ to setup-consumer
   set-position
 end
 
-to setup-provider
-  set color red
-  set provider-type 0 ;;intermitent type
+to setup-provider [x] ;;provider type
+  set color red - x
+  set provider-type x
   set-position
+  if provider-type = 0 [
+    set mu-p ((PL-GOOD + PL-PERFECT) / 2)
+  ]
+  if provider-type = 1 [
+    set mu-p ((PL-OK + PL-GOOD) / 2)
+  ]
+  if provider-type = 3 [
+    set mu-p ((PL-WORST + PL-OK) / 2)
+  ]
 end
 
 
 to update-turtles
   ;; providers leave the environement
-  let n-providers random (pPPC * nb-providers)
-  ask n-of n-providers providers [die]
-  create-providers n-providers [setup-provider]
+  let n-providers random (pPPC * NB-PROVIDERS)
+  let provider-list-type []
+  ask n-of n-providers providers [
+    set provider-list-type lput provider-type provider-list-type
+    die
+  ]
+  foreach provider-list-type [x -> create-providers 1 [setup-provider x]]
   ;; consumers leave the environement
   let n-consumers random (pCPC * nb-consumers)
   ask n-of n-consumers consumers [die]
@@ -114,7 +171,6 @@ to get-nearby-providers
   ask providers [
     if distance myself < r0 [
       set lnp lput self lnp
-      ;;set color red + 2
     ]
   ]
   set nearby-providers lnp
@@ -138,8 +194,13 @@ end
 
 to-report perform
   if provider-type = 0 [
-    let v random-float 10
-    report (random-float (2 * PL-GOOD) + PL-BAD)
+    report random-normal mu-p 1
+  ]
+  if provider-type = 1 or provider-type = 2 [
+    report random-normal mu-p 2
+  ]
+  if provider-type = 3 [
+    report random-normal ((PL-WORST + PL-OK) / 2) 2
   ]
 end
 @#$#@#$#@
@@ -225,21 +286,6 @@ NIL
 
 SLIDER
 10
-105
-182
-138
-nb-providers
-nb-providers
-10
-100
-100.0
-1
-1
-NIL
-HORIZONTAL
-
-SLIDER
-10
 145
 182
 178
@@ -247,7 +293,7 @@ r0
 r0
 0.1
 10
-4.3
+0.0
 0.1
 1
 NIL
@@ -262,7 +308,7 @@ world-size
 world-size
 1
 20
-16.0
+0.0
 1
 1
 NIL
@@ -277,7 +323,7 @@ nb-consumers
 nb-consumers
 10
 100
-100.0
+0.0
 1
 1
 NIL
@@ -292,7 +338,7 @@ pCPC
 pCPC
 0
 1
-0.2
+0.0
 0.1
 1
 NIL
@@ -307,7 +353,7 @@ pPPC
 pPPC
 0
 1
-1.0
+0.0
 0.1
 1
 NIL
@@ -352,7 +398,7 @@ DeltaPHI
 DeltaPHI
 0
 360
-151.0
+0.0
 1
 1
 NIL
@@ -364,7 +410,7 @@ INPUTBOX
 260
 80
 H
-10.0
+0.0
 1
 0
 Number
@@ -375,7 +421,7 @@ INPUTBOX
 340
 80
 Npg
-10.0
+0.0
 1
 0
 Number
@@ -386,7 +432,7 @@ INPUTBOX
 395
 80
 Npo
-40.0
+0.0
 1
 0
 Number
@@ -397,7 +443,7 @@ INPUTBOX
 450
 80
 Npi
-5.0
+0.0
 1
 0
 Number
@@ -408,10 +454,40 @@ INPUTBOX
 505
 80
 Npb
-45.0
+0.0
 1
 0
 Number
+
+SLIDER
+395
+105
+567
+138
+pmuC
+pmuC
+0
+1
+0.0
+0.1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+395
+140
+567
+173
+pProfileSwitch
+pProfileSwitch
+0
+1
+0.0
+0.1
+1
+NIL
+HORIZONTAL
 
 @#$#@#$#@
 ## WHAT IS IT?
