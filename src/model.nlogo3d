@@ -1,6 +1,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Setup Procedures ;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;
+
 globals [
   PL-PERFECT
   PL-GOOD
@@ -8,14 +9,32 @@ globals [
   PL-BAD
   PL-WORST
   NB-PROVIDERS
+
+  LAMBDA ;; IT recency scaling factor
+  GAMMA-I
+
+  UG-CONSUMER-FIREIT
+  UG-CONSUMER-FIRE
+  NB-INTERACTION
+
+  ;; ENUM
+  FIREIT
+  FIRE
+  ;
+  GOOD
+  INTERMITENT
+  OK
+  BAD
 ]
 
 breed [consumers consumer]
 breed [providers provider]
 
 consumers-own [
+  trust-model
   nearby-providers
   history
+  activity-level
 ]
 
 providers-own [
@@ -27,6 +46,14 @@ providers-own [
 to setup
   clear-all
 
+  ;; Set Constants
+  set FIREIT 0
+  set FIRE 1
+  set GOOD 0
+  set OK 1
+  set INTERMITENT 2
+  set BAD 3
+
   set PL-PERFECT 10
   set PL-GOOD 5
   set PL-OK 0
@@ -34,13 +61,46 @@ to setup
   set PL-WORST -10
   set NB-PROVIDERS (Npg + Npo + Npi + Npb)
 
+  set LAMBDA (- (5 / ln 0.5))
+  set GAMMA-I (- ln 0.5)
+
   set-default-shape turtles "circle"
-  create-consumers nb-consumers[ setup-consumer ]
-  create-providers Npg [ setup-provider 0 ] ;; good provider
-  create-providers Npo [ setup-provider 1 ] ;; ok provider
-  create-providers Npi [ setup-provider 2 ] ;; intermitent provider
-  create-providers Npb [ setup-provider 3 ] ;; bad provider
+  create-consumers nb-consumers [ setup-consumer FIREIT ] ;; FIREIT model
+  create-consumers nb-consumers [ setup-consumer FIRE ] ;; FIRE Model
+  create-providers Npg [ setup-provider GOOD ] ;; good provider
+  create-providers Npo [ setup-provider OK ] ;; ok provider
+  create-providers Npi [ setup-provider INTERMITENT ] ;; intermitent provider
+  create-providers Npb [ setup-provider BAD ] ;; bad provider
   reset-ticks
+end
+
+to setup-consumer [t-model]
+  set trust-model t-model
+  set color blue
+  set history []
+  set-position
+  set activity-level ((random-float (max-alpha - min-alpha)) + min-alpha)
+end
+
+to setup-provider [x] ;; provider type
+  set color red - x
+  set provider-type x
+  set-position
+  if provider-type = GOOD [
+    ;set mu-p ((PL-GOOD + PL-PERFECT) / 2)
+    set mu-p ((random-float (PL-PERFECT - PL-GOOD)) + PL-GOOD)
+    set sigma-p 1
+  ]
+  if provider-type = OK [
+    ;set mu-p ((PL-OK + PL-GOOD) / 2)
+    set mu-p ((random-float (PL-GOOD - PL-OK)) + PL-OK)
+    set sigma-p 2
+  ]
+  if provider-type = BAD [
+    ;set mu-p ((PL-WORST + PL-OK) / 2)
+    set mu-p ((random-float (PL-OK - PL-WORST)) + PL-WORST)
+    set sigma-p 2
+  ]
 end
 
 ;;;;;;;;;;;;;;;;;;;;;;;
@@ -48,10 +108,20 @@ end
 ;;;;;;;;;;;;;;;;;;;;;;;
 
 to go
+  ;; Reset UG sum for both groups of consumers.
+  set UG-CONSUMER-FIREIT 0
+  set UG-CONSUMER-FIRE 0
+
   update-turtles
   ask consumers [
-    get-nearby-providers
-    interact-provider
+    ;; activity level parameter controls the frequency of interaction of consumers.
+    if random-float 1 < activity-level [
+      get-nearby-providers
+      if trust-model = FIREIT [
+        interact-provider-FIREIT
+        set NB-INTERACTION (NB-INTERACTION + 1)
+      ]
+    ]
   ]
   ask providers [
     update-mu
@@ -61,17 +131,19 @@ to go
 end
 
 to update-mu
-  if provider-type = 0[
+  ;; TODO Use an M parameter
+  ;; New mu-p must be modified by a delta-mu chosen in the range [-M, +M]
+  if provider-type = GOOD [
     if random-float 1 < pmuC [
       set mu-p ((random-float 5) + 5)
       if mu-p > 10 [set mu-p 10]
       if mu-p < 5 [set mu-p 5] ] ]
-  if provider-type = 1[
+  if provider-type = OK [
     if random-float 1 < pmuC [
       set mu-p (random-float 5)
       if mu-p > 5 [set mu-p 5]
       if mu-p < 0 [set mu-p 0] ] ]
-  if provider-type = 3[
+  if provider-type = BAD [
     if random-float 1 < pmuC [
       set mu-p ((random-float 10) * -1)
       if mu-p > 0 [set mu-p 0]
@@ -85,36 +157,15 @@ to update-profile
       [set x random 4]
     set color red - x
     set provider-type x
-    if provider-type = 0 [
+    if provider-type = GOOD [
       set mu-p ((PL-GOOD + PL-PERFECT) / 2)
     ]
-    if provider-type = 1 [
+    if provider-type = OK [
       set mu-p ((PL-OK + PL-GOOD) / 2)
     ]
-    if provider-type = 3 [
+    if provider-type = BAD [
       set mu-p ((PL-WORST + PL-OK) / 2)
     ]
-  ]
-end
-
-to setup-consumer
-  set color blue
-  set history []
-  set-position
-end
-
-to setup-provider [x] ;;provider type
-  set color red - x
-  set provider-type x
-  set-position
-  if provider-type = 0 [
-    set mu-p ((PL-GOOD + PL-PERFECT) / 2)
-  ]
-  if provider-type = 1 [
-    set mu-p ((PL-OK + PL-GOOD) / 2)
-  ]
-  if provider-type = 3 [
-    set mu-p ((PL-WORST + PL-OK) / 2)
   ]
 end
 
@@ -130,8 +181,12 @@ to update-turtles
   foreach provider-list-type [x -> create-providers 1 [setup-provider x]]
   ;; consumers leave the environement
   let n-consumers random (pCPC * nb-consumers)
-  ask n-of n-consumers consumers [die]
-  create-consumers n-consumers [setup-consumer]
+  let consumer-list-type []
+  ask n-of n-consumers consumers [
+    set consumer-list-type lput trust-model consumer-list-type
+    die
+  ]
+  foreach consumer-list-type [x -> create-consumers 1 [setup-consumer x]]
 
   ;; Change location of consumers and providers
   ask providers [
@@ -176,20 +231,99 @@ to get-nearby-providers
   set nearby-providers lnp
 end
 
-to interact-provider
+to interact-provider-FIREIT
   if length nearby-providers > 0 [
     let v-perform 0
     let chosen-provider 0
-    ask one-of nearby-providers [
-      set v-perform perform
-      set chosen-provider self
+
+    ;; Calculate trust values
+    let HasTrustValues []
+    let NoTrustValues []
+    let best-p 0
+    let best-p-trust 0
+    foreach nearby-providers [ p ->
+      ;; Get local ratings corresponding to provider p
+      let local-ratings (get-local-ratings p)
+      ifelse length local-ratings = 0 [
+        ;; No local ratings available for p
+        set NoTrustValues lput p NoTrustValues
+      ][
+        let p-trust (get-trust local-ratings)
+        ;; Search provider with maximum trust
+        if p-trust > best-p-trust [
+         set best-p p
+         set best-p-trust p-trust
+        ]
+      ]
     ]
-    ;;TODO calculate v-perform
-    set history lput (list chosen-provider v-perform ticks) history
+    ;; Set chosen provider according to chosen action
+    ifelse best-p = 0 [
+      set chosen-provider (one-of NoTrustValues) ]
+    [ set chosen-provider best-p ]
+    ;; Interact with chosen provider
+    ask chosen-provider [ set v-perform perform ]
+
+    ;; Add rating to history
+    set history lput (list chosen-provider (v-perform / 10) ticks) history
+    ;; Keep history size at H
     if length history > H [
       set history but-first history
     ]
+
+    ;; Add to TOTAL UG of group for plotting
+    set UG-CONSUMER-FIREIT (UG-CONSUMER-FIREIT + v-perform)
   ]
+end
+
+to-report TK [ratings weights]
+  let i 0
+  let return-value 0
+  let weight-sum 0
+  foreach ratings [ rating ->
+    set return-value (return-value + (item 2 rating * item i weights))
+    set weight-sum (weight-sum + item i weights)
+    set i (i + 1)
+  ]
+  report return-value
+end
+
+to-report rho-K [ratings weights tr-value gamma]
+  let weight-sum 0
+  let rho-DK 0
+  let i 0
+  ;; Compute rho-DI
+  foreach ratings [ rating ->
+    set rho-DK (rho-DK + (item i weights * (abs (item 1 rating) - tr-value)))
+    set weight-sum (weight-sum + item i weights)
+    set i (i + 1)
+  ]
+  set rho-DK (1 - (1 / 2) * (rho-DK / weight-sum))
+  ;; Compute rho-RK
+  let rho-RK (1 - e ^ (- gamma * weight-sum))
+  ;; Return rho-K
+  report rho-DK * rho-RK
+end
+
+to-report get-trust [local-ratings]
+  let weights-I []
+  foreach local-ratings [ rating ->
+    let wI-r (e ^ ((ticks - (item 2 rating)) / LAMBDA))
+    set weights-I lput wI-r weights-I
+    show weights-I
+  ]
+  let TI (TK local-ratings weights-I)
+
+  report TI
+end
+
+to-report get-local-ratings [p]
+  let local-ratings []
+  foreach history [ r ->
+    if p = (item 0 r) [
+      set local-ratings lput r local-ratings
+    ]
+  ]
+  report local-ratings
 end
 
 to-report perform
@@ -200,7 +334,7 @@ to-report perform
     report random-normal mu-p 2
   ]
   if provider-type = 3 [
-    report random-normal ((PL-WORST + PL-OK) / 2) 2
+    report random-normal mu-p 2
   ]
 end
 @#$#@#$#@
@@ -293,7 +427,7 @@ r0
 r0
 0.1
 10
-0.0
+10.0
 0.1
 1
 NIL
@@ -307,8 +441,8 @@ SLIDER
 world-size
 world-size
 1
-20
-0.0
+22
+22.0
 1
 1
 NIL
@@ -316,14 +450,14 @@ HORIZONTAL
 
 SLIDER
 10
-225
+265
 182
-258
+298
 nb-consumers
 nb-consumers
-10
-100
-0.0
+1
+500
+1.0
 1
 1
 NIL
@@ -410,7 +544,7 @@ INPUTBOX
 260
 80
 H
-0.0
+10.0
 1
 0
 Number
@@ -421,7 +555,7 @@ INPUTBOX
 340
 80
 Npg
-0.0
+10.0
 1
 0
 Number
@@ -432,7 +566,7 @@ INPUTBOX
 395
 80
 Npo
-0.0
+40.0
 1
 0
 Number
@@ -443,7 +577,7 @@ INPUTBOX
 450
 80
 Npi
-0.0
+5.0
 1
 0
 Number
@@ -454,7 +588,7 @@ INPUTBOX
 505
 80
 Npb
-0.0
+45.0
 1
 0
 Number
@@ -489,103 +623,78 @@ pProfileSwitch
 NIL
 HORIZONTAL
 
+INPUTBOX
+605
+50
+670
+110
+min-alpha
+0.25
+1
+0
+Number
+
+TEXTBOX
+605
+30
+755
+48
+Range of consumer activity level
+10
+0.0
+1
+
+INPUTBOX
+670
+50
+735
+110
+max-alpha
+1.0
+1
+0
+Number
+
+TEXTBOX
+15
+235
+165
+261
+Number of consumers in each group
+10
+0.0
+1
+
+PLOT
+610
+165
+1185
+450
+UG
+NIL
+NIL
+0.0
+200.0
+0.0
+10.0
+true
+true
+"" ""
+PENS
+"CONTROL" 1.0 0 -16777216 true "" "plot (UG-CONSUMER-FIREIT / nb-consumers)"
+
+MONITOR
+420
+430
+532
+475
+NIL
+NB-INTERACTION
+17
+1
+11
+
 @#$#@#$#@
-## WHAT IS IT?
-
-This is a 3D version of the NetLogo model Preferential Attachment. In some networks, a few "hubs" have lots of connections, while everybody else only has a few.  This model shows one way such networks can arise.
-
-Such networks can be found in a surprisingly large range of real world situations, ranging from the connections between websites to the collaborations between actors.
-
-This model generates these networks by a process of "preferential attachment", in which new network members prefer to make a connection to the more popular existing members.
-
-## HOW IT WORKS
-
-The model starts with two nodes connected by an edge.
-
-At each step, a new node is added.  A new node picks an existing node to connect to randomly, but with some bias.  More specifically, a node's chance of being selected is directly proportional to the number of connections it already has, or its "degree." This is the mechanism which is called "preferential attachment."
-
-## HOW TO USE IT
-
-Pressing the GO ONCE button adds one new node.  To continuously add nodes, press GO.
-
-The LAYOUT? switch controls whether or not the layout procedure is run.  This procedure attempts to move the nodes around to make the structure of the network easier to see.
-
-The PLOT? switch turns off the plots which speeds up the model.
-
-The RESIZE-NODES button will make all of the nodes take on a size representative of their degree distribution.  If you press it again the nodes will return to equal size.
-
-If you want the model to run faster, you can turn off the LAYOUT? and PLOT? switches and/or freeze the view (using the on/off button in the control strip over the view). The LAYOUT? switch has the greatest effect on the speed of the model.
-
-If you have LAYOUT? switched off, and then want the network to have a more appealing layout, press the REDO-LAYOUT button which will run the layout-step procedure until you press the button again. You can press REDO-LAYOUT at any time even if you had LAYOUT? switched on and it will try to make the network easier to see.
-
-## THINGS TO NOTICE
-
-The networks that result from running this model are often called "scale-free" or "power law" networks. These are networks in which the distribution of the number of connections of each node is not a normal distribution -- instead it follows what is a called a power law distribution.  Power law distributions are different from normal distributions in that they do not have a peak at the average, and they are more likely to contain extreme values (see Albert & Barabási 2002 for a further description of the frequency and significance of scale-free networks).  Barabási and Albert originally described this mechanism for creating networks, but there are other mechanisms of creating scale-free networks and so the networks created by the mechanism implemented in this model are referred to as Barabási-Albert scale-free networks.
-
-You can see the degree distribution of the network in this model by looking at the plots. The top plot is a histogram of the degree of each node.  The bottom plot shows the same data, but both axes are on a logarithmic scale.  When degree distribution follows a power law, it appears as a straight line on the log-log plot.  One simple way to think about power laws is that if there is one node with a degree distribution of 1000, then there will be ten nodes with a degree distribution of 100, and 100 nodes with a degree distribution of 10.
-
-## THINGS TO TRY
-
-Let the model run a little while.  How many nodes are "hubs", that is, have many connections?  How many have only a few?  Does some low degree node ever become a hub?  How often?
-
-Turn off the LAYOUT? switch and freeze the view to speed up the model, then allow a large network to form.  What is the shape of the histogram in the top plot?  What do you see in log-log plot? Notice that the log-log plot is only a straight line for a limited range of values.  Why is this?  Does the degree to which the log-log plot resembles a straight line grow as you add more node to the network?
-
-## EXTENDING THE MODEL
-
-Assign an additional attribute to each node.  Make the probability of attachment depend on this new attribute as well as on degree.  (A bias slider could control how much the attribute influences the decision.)
-
-Can the layout algorithm be improved?  Perhaps nodes from different hubs could repel each other more strongly than nodes from the same hub, in order to encourage the hubs to be physically separate in the layout.
-
-## NETWORK CONCEPTS
-
-There are many ways to graphically display networks.  This model uses a common "spring" method where the movement of a node at each time step is the net result of "spring" forces that pulls connected nodes together and repulsion forces that push all the nodes away from each other.  This code is in the layout-step procedure. You can force this code to execute any time by pressing the REDO LAYOUT button, and pressing it again when you are happy with the layout.
-
-## RELATED MODELS
-
-See other models in the Networks section of the Models Library, such as Giant Component. The Preferential Attachment model is also implemented in 2D.
-
-See also Network Example, in the Code Examples section.
-
-See also the Path Dependence model in the 2D Urban Suite.
-
-## CREDITS AND REFERENCES
-
-This model is based on:
-Albert-László Barabási (2002). Linked: The New Science of Networks, Perseus Publishing, Cambridge, Massachusetts, pages 79-92.
-
-For a more technical treatment, see:
-Albert-László Barabási & Reka Albert (1999). Emergence of Scaling in Random Networks, Science, Vol 286, Issue 5439, 15 October 1999, pages 509-512.
-
-Barabási's webpage has additional information at: http://www.barabasilab.com/
-
-For a model similar to the one described in the first extension, please consult:
-W. Brian Arthur (1988), "Urban Systems and Historical Path-Dependence", Chapt. 4 in Urban systems and Infrastructure, J. Ausubel and R. Herman (eds.), National Academy of Sciences, Washington, D.C., 1988.
-
-## HOW TO CITE
-
-If you mention this model or the NetLogo software in a publication, we ask that you include the citations below.
-
-For the model itself:
-
-* Stonedahl, F. and Wilensky, U. (2011).  NetLogo Preferential Attachment 3D model.  http://ccl.northwestern.edu/netlogo/models/PreferentialAttachment3D.  Center for Connected Learning and Computer-Based Modeling, Northwestern University, Evanston, IL.
-
-Please cite the NetLogo software as:
-
-* Wilensky, U. (1999). NetLogo. http://ccl.northwestern.edu/netlogo/. Center for Connected Learning and Computer-Based Modeling, Northwestern University, Evanston, IL.
-
-## COPYRIGHT AND LICENSE
-
-Copyright 2011 Uri Wilensky.
-
-![CC BY-NC-SA 3.0](http://ccl.northwestern.edu/images/creativecommons/byncsa.png)
-
-This work is licensed under the Creative Commons Attribution-NonCommercial-ShareAlike 3.0 License.  To view a copy of this license, visit https://creativecommons.org/licenses/by-nc-sa/3.0/ or send a letter to Creative Commons, 559 Nathan Abbott Way, Stanford, California 94305, USA.
-
-Commercial licenses are also available. To inquire about commercial licenses, please contact Uri Wilensky at uri@northwestern.edu.
-
-This is a 3D version of the 2D model Preferential Attachment.
-
-<!-- 2011 3D Cite: Stonedahl, F. -->
 @#$#@#$#@
 default
 true
