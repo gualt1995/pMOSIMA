@@ -15,7 +15,8 @@ globals [
 
   UG-CONSUMER-FIREIT
   UG-CONSUMER-FIRE
-  NB-INTERACTION
+  TOTAL-NB-INTERACTION
+  INITIAL-TEMPERATURE
 
   ;; ENUM
   FIREIT
@@ -35,6 +36,9 @@ consumers-own [
   nearby-providers
   history
   activity-level
+  temperature
+  total-UG-observed
+  nb-interaction
 ]
 
 providers-own [
@@ -60,6 +64,7 @@ to setup
   set PL-BAD -5
   set PL-WORST -10
   set NB-PROVIDERS (Npg + Npo + Npi + Npb)
+  set INITIAL-TEMPERATURE 100
 
   set LAMBDA (- (5 / ln 0.5))
   set GAMMA-I (- ln 0.5)
@@ -80,6 +85,7 @@ to setup-consumer [t-model]
   set history []
   set-position
   set activity-level ((random-float (max-alpha - min-alpha)) + min-alpha)
+  set temperature INITIAL-TEMPERATURE
 end
 
 to setup-provider [x] ;; provider type
@@ -87,18 +93,15 @@ to setup-provider [x] ;; provider type
   set provider-type x
   set-position
   if provider-type = GOOD [
-    ;set mu-p ((PL-GOOD + PL-PERFECT) / 2)
-    set mu-p ((random-float (PL-PERFECT - PL-GOOD)) + PL-GOOD)
+    set mu-p ((PL-GOOD + PL-PERFECT) / 2)
     set sigma-p 1
   ]
   if provider-type = OK [
-    ;set mu-p ((PL-OK + PL-GOOD) / 2)
-    set mu-p ((random-float (PL-GOOD - PL-OK)) + PL-OK)
+    set mu-p ((PL-GOOD + PL-OK) / 2)
     set sigma-p 2
   ]
   if provider-type = BAD [
-    ;set mu-p ((PL-WORST + PL-OK) / 2)
-    set mu-p ((random-float (PL-OK - PL-WORST)) + PL-WORST)
+    set mu-p ((PL-OK + PL-WORST) / 2)
     set sigma-p 2
   ]
 end
@@ -119,7 +122,7 @@ to go
       get-nearby-providers
       if trust-model = FIREIT [
         interact-provider-FIREIT
-        set NB-INTERACTION (NB-INTERACTION + 1)
+        set TOTAL-NB-INTERACTION (TOTAL-NB-INTERACTION + 1)
       ]
     ]
   ]
@@ -131,7 +134,7 @@ to go
 end
 
 to update-mu
-  ;; TODO Use an M parameter
+  ;; TODO: Use an M parameter
   ;; New mu-p must be modified by a delta-mu chosen in the range [-M, +M]
   if provider-type = GOOD [
     if random-float 1 < pmuC [
@@ -151,6 +154,7 @@ to update-mu
 end
 
 to update-profile
+  ;; TODO: new mu-p is mean of [PL-GOOD, PL-PERFECT] ?
   if random-float 1 < pProfileSwitch [
     let x random 4
     while [ x = provider-type]
@@ -168,7 +172,6 @@ to update-profile
     ]
   ]
 end
-
 
 to update-turtles
   ;; providers leave the environement
@@ -237,10 +240,9 @@ to interact-provider-FIREIT
     let chosen-provider 0
 
     ;; Calculate trust values
-    let HasTrustValues []
     let NoTrustValues []
     let best-p 0
-    let best-p-trust 0
+    let best-p-trust -2
     foreach nearby-providers [ p ->
       ;; Get local ratings corresponding to provider p
       let local-ratings (get-local-ratings p)
@@ -249,6 +251,11 @@ to interact-provider-FIREIT
         set NoTrustValues lput p NoTrustValues
       ][
         let p-trust (get-trust local-ratings)
+        if p-trust < -1 [show word "ptrust " p-trust]
+        ;show word "p-trust=" p-trust
+        ;foreach local-ratings [ r ->
+          ;show word "Rating " r
+        ;]
         ;; Search provider with maximum trust
         if p-trust > best-p-trust [
          set best-p p
@@ -256,19 +263,57 @@ to interact-provider-FIREIT
         ]
       ]
     ]
-    ;; Set chosen provider according to chosen action
+    ;show word "Best p trust " best-p-trust
+
     ifelse best-p = 0 [
-      set chosen-provider (one-of NoTrustValues) ]
-    [ set chosen-provider best-p ]
+      ;; If no nearby provider has a trust value, choose a random provider
+      set chosen-provider (one-of NoTrustValues)
+    ][
+      ifelse length NoTrustValues = 0 [
+        ;; If all neighborhood has been explored then pick best neighbor.
+        set chosen-provider best-p
+      ][
+        ;; Otherwise choose between actions a1 and a2:
+        ;; a1: pick best provider
+        ;; a2: pick random provider in the NoTrustValues.
+        ;; P(ak) dependent on the current temperature.
+        ;show "Choose between a1 and a2"
+        let ER-a1 best-p-trust
+        let ER-a2 0
+        ifelse nb-interaction = 0 [ set ER-a2 0 ][ set ER-a2 (total-UG-observed / nb-interaction) ]
+        let exp-a1 (e ^ (ER-a1 / temperature))
+        let exp-a2 (e ^ (ER-a2 / temperature))
+        let q1 (exp-a1 / (exp-a1 + exp-a2))
+
+        ifelse random-float 1 < q1 [
+          ;; Chose a1
+          set chosen-provider best-p
+          ;show "a1"
+        ][
+          ;; Chose a2
+          set chosen-provider (one-of NoTrustValues)
+          ;show "a2"
+        ]
+      ]
+    ]
     ;; Interact with chosen provider
     ask chosen-provider [ set v-perform perform ]
 
+    ;; Compute average UG observed
+    set total-UG-observed (total-UG-observed + v-perform)
     ;; Add rating to history
-    set history lput (list chosen-provider (v-perform / 10) ticks) history
+    ;; Rating is performance normalized to the range [-1, 1]
+    let normalized-perform 2 * ((v-perform - PL-WORST) / (PL-PERFECT - PL-WORST)) - 1
+
+    set history lput (list chosen-provider normalized-perform ticks) history
     ;; Keep history size at H
     if length history > H [
       set history but-first history
     ]
+
+    ;; Update Temperature for future interactions
+    set temperature (temperature - 1)
+    if temperature < 1 [ set temperature 1 ]
 
     ;; Add to TOTAL UG of group for plotting
     set UG-CONSUMER-FIREIT (UG-CONSUMER-FIREIT + v-perform)
@@ -276,14 +321,19 @@ to interact-provider-FIREIT
 end
 
 to-report TK [ratings weights]
+  ;show ratings
+  ;show weights
+  ;report 0
   let i 0
   let return-value 0
   let weight-sum 0
-  foreach ratings [ rating ->
-    set return-value (return-value + (item 2 rating * item i weights))
-    set weight-sum (weight-sum + item i weights)
+  while [ i != length ratings ][
+    let rating (item i ratings)
+    set return-value return-value + ((item 1 rating) * (item i weights))
+    set weight-sum weight-sum + (item i weights)
     set i (i + 1)
   ]
+  set return-value (return-value / weight-sum)
   report return-value
 end
 
@@ -305,11 +355,11 @@ to-report rho-K [ratings weights tr-value gamma]
 end
 
 to-report get-trust [local-ratings]
+  ;; TODO Add CR and WR
   let weights-I []
   foreach local-ratings [ rating ->
     let wI-r (e ^ ((ticks - (item 2 rating)) / LAMBDA))
     set weights-I lput wI-r weights-I
-    show weights-I
   ]
   let TI (TK local-ratings weights-I)
 
@@ -327,15 +377,27 @@ to-report get-local-ratings [p]
 end
 
 to-report perform
-  if provider-type = 0 [
-    report random-normal mu-p 1
+  let return-value 0
+  ifelse provider-type = INTERMITENT [
+    set return-value (random-float (PL-GOOD - PL-BAD)) + PL-BAD
+  ][
+    set return-value random-normal mu-p sigma-p
   ]
-  if provider-type = 1 or provider-type = 2 [
-    report random-normal mu-p 2
+  ;; Clamp value between min and max
+  if return-value > 10 [ set return-value 10 ]
+  if return-value < -10 [ set return-value -10 ]
+
+  report return-value
+end
+
+to-report get-mean-temp
+  let mean-t 0
+  ask consumers [
+    if trust-model = FIREIT [
+      set mean-t (mean-t + temperature)
+    ]
   ]
-  if provider-type = 3 [
-    report random-normal mu-p 2
-  ]
+  report mean-t / nb-consumers
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
@@ -427,7 +489,7 @@ r0
 r0
 0.1
 10
-10.0
+7.0
 0.1
 1
 NIL
@@ -457,7 +519,7 @@ nb-consumers
 nb-consumers
 1
 500
-1.0
+500.0
 1
 1
 NIL
@@ -636,9 +698,9 @@ Number
 
 TEXTBOX
 605
-30
+20
 755
-48
+45
 Range of consumer activity level
 10
 0.0
@@ -666,10 +728,10 @@ Number of consumers in each group
 1
 
 PLOT
-610
-165
-1185
-450
+755
+15
+1330
+300
 UG
 NIL
 NIL
@@ -684,15 +746,33 @@ PENS
 "CONTROL" 1.0 0 -16777216 true "" "plot (UG-CONSUMER-FIREIT / nb-consumers)"
 
 MONITOR
-420
-430
-532
-475
+415
+230
+567
+271
 NIL
-NB-INTERACTION
+TOTAL-NB-INTERACTION
 17
 1
-11
+10
+
+PLOT
+390
+275
+740
+505
+Mean T FIREIT
+NIL
+NIL
+0.0
+10.0
+0.0
+10.0
+true
+false
+"" ""
+PENS
+"default" 1.0 0 -16777216 true "" "plot get-mean-temp"
 
 @#$#@#$#@
 @#$#@#$#@
