@@ -16,7 +16,8 @@ globals [
   UG-CONSUMER-FIREIT
   UG-CONSUMER-FIRE
   UG-CONSUMER-FIREITWR
-  TOTAL-NB-INTERACTION
+  NB-INTERACTION-FIREIT
+  NB-INTERACTION-FIREITWR
   INITIAL-TEMPERATURE
 
   ;; ENUM
@@ -73,8 +74,8 @@ to setup
   set GAMMA-I (- ln 0.5)
 
   set-default-shape turtles "circle"
-  ;;create-consumers nb-consumers [ setup-consumer FIREIT ] ;; FIREIT model
-  create-consumers nb-consumers [ setup-consumer FIREITWR ] ;; FIRE Model
+  create-consumers nb-consumers [ setup-consumer FIREIT ] ;; FIREIT model
+  ;;create-consumers nb-consumers [ setup-consumer FIREITWR ] ;; FIRE Model
   create-providers Npg [ setup-provider GOOD ] ;; good provider
   create-providers Npo [ setup-provider OK ] ;; ok provider
   create-providers Npi [ setup-provider INTERMITENT ] ;; intermitent provider
@@ -118,6 +119,9 @@ to go
   set UG-CONSUMER-FIREIT 0
   set UG-CONSUMER-FIRE 0
   set UG-CONSUMER-FIREITWR 0
+  ;; Reset number of interaction of the current tick
+  set NB-INTERACTION-FIREIT 0
+  set NB-INTERACTION-FIREITWR 0
 
   update-turtles
   ask consumers [
@@ -128,11 +132,11 @@ to go
       get-nearby-providers
       if trust-model = FIREIT [
         interact-provider-FIREIT "NA"
-        set TOTAL-NB-INTERACTION (TOTAL-NB-INTERACTION + 1)
+        set NB-INTERACTION-FIREIT (NB-INTERACTION-FIREIT + 1)
       ]
       if trust-model = FIREITWR [
         interact-provider-FIREIT "WR"
-        set TOTAL-NB-INTERACTION (TOTAL-NB-INTERACTION + 1)
+        set NB-INTERACTION-FIREITWR (NB-INTERACTION-FIREITWR + 1)
       ]
     ]
   ]
@@ -264,7 +268,7 @@ to-report get-all-witnesses [me prev-cons prov currentDeph]
       foreach tmp [y -> set report-list lput y report-list]
     ]
   ]
-  show report-list
+  ;;show report-list
   report report-list
 end
 
@@ -338,11 +342,6 @@ to interact-provider-FIREIT [selection]
         set NoTrustValues lput p NoTrustValues
       ][
         let p-trust (get-trust local-ratings)
-        if p-trust < -1 [show word "ptrust " p-trust]
-        ;show word "p-trust=" p-trust
-        ;foreach local-ratings [ r ->
-          ;show word "Rating " r
-        ;]
         ;; Search provider with maximum trust
         if p-trust > best-p-trust [
          set best-p p
@@ -584,7 +583,7 @@ r0
 r0
 0.1
 10
-7.0
+10.0
 0.1
 1
 NIL
@@ -599,7 +598,7 @@ world-size
 world-size
 1
 22
-5.0
+22.0
 1
 1
 NIL
@@ -614,7 +613,7 @@ nb-consumers
 nb-consumers
 1
 500
-10.0
+500.0
 1
 1
 NIL
@@ -712,7 +711,7 @@ INPUTBOX
 340
 80
 Npg
-1.0
+10.0
 1
 0
 Number
@@ -723,7 +722,7 @@ INPUTBOX
 395
 80
 Npo
-0.0
+40.0
 1
 0
 Number
@@ -734,7 +733,7 @@ INPUTBOX
 450
 80
 Npi
-1.0
+5.0
 1
 0
 Number
@@ -745,7 +744,7 @@ INPUTBOX
 505
 80
 Npb
-1.0
+45.0
 1
 0
 Number
@@ -833,20 +832,20 @@ NIL
 0.0
 200.0
 0.0
-10.0
+7.0
 true
 true
 "" ""
 PENS
-"CONTROL" 1.0 0 -16777216 true "" "plot (UG-CONSUMER-FIREIT / nb-consumers)"
+"CONTROL" 1.0 0 -16777216 true "" "plot (UG-CONSUMER-FIREIT / NB-INTERACTION-FIREIT)"
 
 MONITOR
 415
 230
-567
+607
 271
 NIL
-TOTAL-NB-INTERACTION
+NB-INTERACTION-FIREIT
 17
 1
 10
