@@ -1,4 +1,4 @@
-;;;;;;;;;;;;;;;;;;;;;;;;
+ ;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Setup Procedures ;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -29,6 +29,11 @@ globals [
   INTERMITENT
   OK
   BAD
+
+  ;;Weigth of the selection methods
+  WI
+  WW
+  WC
 ]
 
 breed [consumers consumer]
@@ -53,6 +58,10 @@ providers-own [
 to setup
   clear-all
 
+  ;;set Selection weigth
+  set WI 2
+  set WW 1
+
   ;; Set Constants
   set FIREIT 0
   set FIRE 1
@@ -75,7 +84,7 @@ to setup
 
   set-default-shape turtles "circle"
   create-consumers nb-consumers [ setup-consumer FIREIT ] ;; FIREIT model
-  ;;create-consumers nb-consumers [ setup-consumer FIREITWR ] ;; FIRE Model
+  create-consumers nb-consumers [ setup-consumer FIREITWR ] ;; FIRE Model
   create-providers Npg [ setup-provider GOOD ] ;; good provider
   create-providers Npo [ setup-provider OK ] ;; ok provider
   create-providers Npi [ setup-provider INTERMITENT ] ;; intermitent provider
@@ -125,19 +134,17 @@ to go
 
   update-turtles
   ask consumers [
+    ;;show history
     ;;let empty []
     ;;let test get-all-witnesses self empty one-of providers 0
     ;;activity level parameter controls the frequency of interaction of consumers.
     if random-float 1 < activity-level [
       get-nearby-providers
-      if trust-model = FIREIT [
-        interact-provider-FIREIT "NA"
-        set NB-INTERACTION-FIREIT (NB-INTERACTION-FIREIT + 1)
-      ]
-      if trust-model = FIREITWR [
-        interact-provider-FIREIT "WR"
-        set NB-INTERACTION-FIREITWR (NB-INTERACTION-FIREITWR + 1)
-      ]
+      ifelse trust-model = FIREIT
+      [interact-provider-FIREIT "NA"
+        set NB-INTERACTION-FIREIT (NB-INTERACTION-FIREIT + 1)]
+      [interact-provider-FIREIT "WR"
+        set NB-INTERACTION-FIREITWR (NB-INTERACTION-FIREITWR + 1)]
     ]
   ]
   ask providers [
@@ -249,16 +256,15 @@ to get-nearby-providers
 end
 
 to-report get-all-witnesses [me prev-cons prov currentDeph]
+  ;;reports a list of the ratings of the closest consumers that have interacted with prov
   if currentDeph = WR_nRL [report []]
   set currentDeph 1 + currentDeph
+  set prev-cons lput self prev-cons
   let closest-cons get-closet-consumers me prev-cons
   let report-list []
+  ;;show closest-cons
   foreach closest-cons [x ->
-    ;;show "******"
-    ;;ask me[
-    ;;show who
-    ;;]
-    ;;show "******"
+    ;;show turtle-set x
     let rates ask-ratings turtle-set x prov
     ifelse rates = 0
     [ let tmp get-all-witnesses x prev-cons prov currentDeph
@@ -268,12 +274,13 @@ to-report get-all-witnesses [me prev-cons prov currentDeph]
       foreach tmp [y -> set report-list lput y report-list]
     ]
   ]
-  ;;show report-list
+  ;;show report-list ;;display for debuging
   report report-list
 end
 
 to-report get-closet-consumers [me previous-consumers]
   ;;returns a list of the closes consumers with at most WR_nBF consumers
+  ;;show previous-consumers
   let lnc []
   ask other consumers [
     if distance me < r0 [
@@ -302,20 +309,15 @@ to-report get-closet-consumers [me previous-consumers]
 end
 
 to-report ask-ratings [me p]
-  ;;reports providers in history that match prov or 0 if none are found
+  ;;reports providers in history that match p or 0 if none are found*
   let matched []
   ask me [
     if length history > 0[
-      ;;show "-----------------------"
-      ;;show p
-      ;;show who
-      ;;show item 0 history
-      ;;show "-----------------------"
+      ;;show history
     ]
     ;; adding the turtle with its rating in the list
     foreach history [x ->
       if item 0 x = p [
-        ;;show "test"
         set matched lput x matched
       ]
     ]
@@ -335,22 +337,36 @@ to interact-provider-FIREIT [selection]
     let best-p 0
     let best-p-trust -2
     foreach nearby-providers [ p ->
-      ;; Get local ratings corresponding to provider p
-      let local-ratings (get-local-ratings p selection)
-      ifelse length local-ratings = 0 [
-        ;; No local ratings available for p
-        set NoTrustValues lput p NoTrustValues
+      ifelse selection = "NA"
+      [
+        ;; Get local ratings corresponding to provider p
+        let local-ratings (get-local-ratings p)
+        ifelse length local-ratings = 0
+        [set NoTrustValues lput p NoTrustValues]
+        [let p-trust (get-trust local-ratings [])
+          ;; Search provider with maximum trust
+          if p-trust > best-p-trust [
+            set best-p p
+            set best-p-trust p-trust
+          ]
+        ]
       ][
-        let p-trust (get-trust local-ratings)
-        ;; Search provider with maximum trust
-        if p-trust > best-p-trust [
-         set best-p p
-         set best-p-trust p-trust
+        let local-ratings (get-local-ratings p)
+        ;; Get ratings of wtinesses
+        let wr-ratings (get-wr-ratings p )
+        ifelse (length local-ratings = 0) and (length wr-ratings = 0)[
+          set NoTrustValues lput p NoTrustValues
+        ][
+          let p-trust (get-trust local-ratings wr-ratings)
+          ;; Search provider with maximum trust
+          if p-trust > best-p-trust [
+            set best-p p
+            set best-p-trust p-trust
+          ]
         ]
       ]
     ]
     ;show word "Best p trust " best-p-trust
-
     ifelse best-p = 0 [
       ;; If no nearby provider has a trust value, choose a random provider
       set chosen-provider (one-of NoTrustValues)
@@ -402,7 +418,9 @@ to interact-provider-FIREIT [selection]
     if temperature < 1 [ set temperature 1 ]
 
     ;; Add to TOTAL UG of group for plotting
-    set UG-CONSUMER-FIREIT (UG-CONSUMER-FIREIT + v-perform)
+    ifelse selection = "NA"
+    [set UG-CONSUMER-FIREIT (UG-CONSUMER-FIREIT + v-perform)]
+    [set UG-CONSUMER-FIREITWR (UG-CONSUMER-FIREITWR + v-perform)]
   ]
 end
 
@@ -423,7 +441,7 @@ to-report TK [ratings weights]
   report return-value
 end
 
-to-report rho-K [ratings weights tr-value gamma]
+to-report rho-K [ratings weights tr-value]
   let weight-sum 0
   let rho-DK 0
   let i 0
@@ -435,13 +453,13 @@ to-report rho-K [ratings weights tr-value gamma]
   ]
   set rho-DK (1 - (1 / 2) * (rho-DK / weight-sum))
   ;; Compute rho-RK
-  let rho-RK (1 - e ^ (- gamma * weight-sum))
+  let rho-RK (1 - e ^ (- GAMMA-I * weight-sum))
   ;; Return rho-K
   report rho-DK * rho-RK
 end
 
-to-report get-trust [local-ratings]
-  ;; TODO Add CR and WR
+to-report get-it-trust [local-ratings]
+  ;; reports TK for k = IT
   let weights-I []
   foreach local-ratings [ rating ->
     let wI-r (e ^ ((ticks - (item 2 rating)) / LAMBDA))
@@ -452,22 +470,49 @@ to-report get-trust [local-ratings]
   report TI
 end
 
-to-report get-local-ratings [p selection]
+to-report get-trust [wr-ratings local-ratings]
+  let uui 0
+  let uuw 0
+  if length local-ratings > 0[
+    let weights-I []
+    foreach local-ratings [ rating ->
+      let wI-r (e ^ ((ticks - (item 2 rating)) / LAMBDA))
+      set weights-I lput wI-r weights-I
+    ]
+    let TI (TK local-ratings weights-I)
+    set uui (WI * rho-K local-ratings weights-I TI )
+  ]
+  if length wr-ratings > 0[
+    let weights-WR []
+    foreach wr-ratings [ rating ->
+      let wR-r (e ^ ((ticks - (item 2 rating)) / LAMBDA))
+      set weights-WR lput wR-r weights-WR
+    ]
+    let WR (TK wr-ratings weights-WR)
+    set uuw  (WW * rho-K wr-ratings weights-WR WR)
+  ]
+  report uuw + uui
+end
+
+to-report get-local-ratings [p]
   let local-ratings []
   foreach history [ r ->
     if p = (item 0 r) [
       set local-ratings lput r local-ratings
     ]
   ]
-  if selection = "WR" [
-    let witnesses get-all-witnesses self [] p 0
-    foreach witnesses [ r ->
-      if p = (item 0 r) [
-        set local-ratings lput r local-ratings
-      ]
+  report local-ratings
+end
+
+to-report get-wr-ratings [p]
+  let wr-ratings []
+  let witnesses get-all-witnesses self [] p 0
+  foreach witnesses [ r ->
+    if p = (item 0 r) [
+      set wr-ratings lput r wr-ratings
     ]
   ]
-  report local-ratings
+  report wr-ratings
 end
 
 to-report perform
@@ -838,6 +883,7 @@ true
 "" ""
 PENS
 "CONTROL" 1.0 0 -16777216 true "" "plot (UG-CONSUMER-FIREIT / NB-INTERACTION-FIREIT)"
+"WR" 1.0 0 -2674135 true "" "plot (UG-CONSUMER-FIREITWR / NB-INTERACTION-FIREITWR)"
 
 MONITOR
 415
@@ -892,7 +938,7 @@ WR_nRL
 WR_nRL
 1
 10
-2.0
+5.0
 1
 1
 NIL
