@@ -8,10 +8,12 @@ to setup
   ;; Set selection weigths
   set WI 2
   set WW 1
+  set WC 0.5
 
   ;; Set constants
   set FIREIT 0
   set FIREITWR 1
+  set FIREITCR 2
   set GOOD 0
   set OK 1
   set INTERMITENT 2
@@ -30,8 +32,9 @@ to setup
   set GAMMA-W (- ln 0.5)
 
   set-default-shape turtles "circle"
-  create-consumers nb-consumers [ setup-consumer FIREIT ] ;; FIREIT model
+  if IT? [create-consumers nb-consumers [ setup-consumer FIREIT ]] ;; FIREIT model
   if WR? [create-consumers nb-consumers [ setup-consumer FIREITWR ]] ;; FIREITWR Model
+  if CR? [create-consumers nb-consumers [ setup-consumer FIREITCR ]] ;; FIREITCR Model
   create-providers Npg [ setup-provider GOOD ] ;; good provider
   create-providers Npo [ setup-provider OK ] ;; ok provider
   create-providers Npi [ setup-provider INTERMITENT ] ;; intermitent provider
@@ -69,6 +72,7 @@ to setup-provider [x] ;; provider type
   set color red - x
   set provider-type x
   set-position
+  set history []
   if provider-type = GOOD [
     set mu-p ((PL-GOOD + PL-PERFECT) / 2)
     set sigma-p 1
