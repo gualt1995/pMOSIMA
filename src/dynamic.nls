@@ -1,0 +1,83 @@
+to update-mu
+  ;; TODO: Use an M parameter
+  ;; New mu-p must be modified by a delta-mu chosen in the range [-M, +M]
+  if provider-type = GOOD [
+    if random-float 1 < pmuC [
+      set mu-p ((random-float 5) + 5)
+      if mu-p > 10 [set mu-p 10]
+      if mu-p < 5 [set mu-p 5] ] ]
+  if provider-type = OK [
+    if random-float 1 < pmuC [
+      set mu-p (random-float 5)
+      if mu-p > 5 [set mu-p 5]
+      if mu-p < 0 [set mu-p 0] ] ]
+  if provider-type = BAD [
+    if random-float 1 < pmuC [
+      set mu-p ((random-float 10) * -1)
+      if mu-p > 0 [set mu-p 0]
+      if mu-p < -10 [set mu-p -10] ] ]
+end
+
+to update-profile
+  if random-float 1 < pProfileSwitch [
+    let x random 4
+    while [ x = provider-type]
+      [set x random 4]
+    set color red - x
+    set provider-type x
+    if provider-type = GOOD [
+      set mu-p ((PL-GOOD + PL-PERFECT) / 2)
+    ]
+    if provider-type = OK [
+      set mu-p ((PL-OK + PL-GOOD) / 2)
+    ]
+    if provider-type = BAD [
+      set mu-p ((PL-WORST + PL-OK) / 2)
+    ]
+  ]
+end
+
+to update-turtles
+  ;; providers leave the environement
+  let n-providers random (pPPC * NB-PROVIDERS)
+  let provider-list-type []
+  ask n-of n-providers providers [
+    set provider-list-type lput provider-type provider-list-type
+    die
+  ]
+  foreach provider-list-type [x -> create-providers 1 [setup-provider x]]
+  ;; consumers leave the environement
+  let n-consumers random (pCPC * nb-consumers)
+  let consumer-list-type []
+  ask n-of n-consumers consumers [
+    set consumer-list-type lput trust-model consumer-list-type
+    die
+  ]
+  foreach consumer-list-type [x -> create-consumers 1 [setup-consumer x]]
+
+  ;; Change location of consumers and providers
+  ask providers [
+    if random-float 1 < pPLC
+    [move-turtle]
+  ]
+  ask consumers [
+    if random-float 1 < pCLC
+    [move-turtle]
+  ]
+end
+
+to move-turtle
+  let r sqrt((xcor ^ 2) + (ycor ^ 2) + (zcor ^ 2))
+  let phi (atan sqrt((xcor ^ 2) + (ycor ^ 2)) zcor)
+  let theta (atan ycor xcor)
+
+  let delta-phi (- deltaPHI + (random-float (2 * deltaPHI)))
+  let delta-theta (- deltaPHI + (random-float (2 * deltaPHI)))
+
+  set phi (phi + delta-phi)
+  set theta (theta + delta-theta)
+
+  set ycor r * (sin phi) * (sin theta)
+  set xcor r * (sin phi) * (cos theta)
+  set zcor r * (cos phi)
+end

@@ -1,0 +1,84 @@
+;; ----------------------------------
+;; SETUP PROCEDURES
+;; ----------------------------------
+
+to setup
+  clear-all
+
+  ;; Set selection weigths
+  set WI 2
+  set WW 1
+
+  ;; Set constants
+  set FIREIT 0
+  set FIREITWR 1
+  set GOOD 0
+  set OK 1
+  set INTERMITENT 2
+  set BAD 3
+
+  set PL-PERFECT 10
+  set PL-GOOD 5
+  set PL-OK 0
+  set PL-BAD -5
+  set PL-WORST -10
+  set NB-PROVIDERS (Npg + Npo + Npi + Npb)
+  set INITIAL-TEMPERATURE 100
+
+  set LAMBDA (- (5 / ln 0.5))
+  set GAMMA-I (- ln 0.5)
+  set GAMMA-W (- ln 0.5)
+
+  set-default-shape turtles "circle"
+  create-consumers nb-consumers [ setup-consumer FIREIT ] ;; FIREIT model
+  if WR? [create-consumers nb-consumers [ setup-consumer FIREITWR ]] ;; FIREITWR Model
+  create-providers Npg [ setup-provider GOOD ] ;; good provider
+  create-providers Npo [ setup-provider OK ] ;; ok provider
+  create-providers Npi [ setup-provider INTERMITENT ] ;; intermitent provider
+  create-providers Npb [ setup-provider BAD ] ;; bad provider
+  reset-ticks
+end
+
+;; set-position
+;; 
+;; Sets the position of an agent on the spherical world. All agents 
+;; are placed on the sphere of center (0,0,0) and radius `world-size`.
+to set-position  
+  tilt-up asin (1.0 - random-float 2.0)
+  jump world-size
+end
+
+;; setup-consumer
+;;
+;; Initializes a consumer based on its trust-model.
+;; @param t-model Trust model.
+to setup-consumer [t-model]
+  set trust-model t-model
+  set color blue
+  set history []
+  set-position
+  set activity-level ((random-float (max-alpha - min-alpha)) + min-alpha)
+  set temperature INITIAL-TEMPERATURE
+end
+
+;; setup-provider
+;; 
+;; Initializes a provider based on its type. 
+;; @param x Provider type.
+to setup-provider [x] ;; provider type
+  set color red - x
+  set provider-type x
+  set-position
+  if provider-type = GOOD [
+    set mu-p ((PL-GOOD + PL-PERFECT) / 2)
+    set sigma-p 1
+  ]
+  if provider-type = OK [
+    set mu-p ((PL-GOOD + PL-OK) / 2)
+    set sigma-p 2
+  ]
+  if provider-type = BAD [
+    set mu-p ((PL-OK + PL-WORST) / 2)
+    set sigma-p 2
+  ]
+end

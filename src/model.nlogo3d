@@ -1,39 +1,25 @@
- ;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Setup Procedures ;;;
-;;;;;;;;;;;;;;;;;;;;;;;;
+__includes [
+  "setup.nls"
+  "dynamic.nls"
+  "utils.nls"
+]
 
 globals [
-  PL-PERFECT
-  PL-GOOD
-  PL-OK
-  PL-BAD
-  PL-WORST
-  NB-PROVIDERS
+  PL-PERFECT PL-GOOD PL-OK PL-BAD PL-WORST ;; Bounds on provider performance.
+  NB-PROVIDERS ;; Total number of providers.
+  LAMBDA ;; IT recency scaling factor.
+  GAMMA-I ;; Relability function parameter for IT Trust.
+  GAMMA-W ;; Relability function parameter for WR Trust.
 
-  LAMBDA ;; IT recency scaling factor
-  GAMMA-I
+  UG-CONSUMER-FIREIT ;; Total reported UG for IT consumers in one iteration.
+  UG-CONSUMER-FIREITWR ;; Total reported UG for ITWR consumers in one iteration.
+  NB-INTERACTION-FIREIT ;; Number of interactions of IT consumers.
+  NB-INTERACTION-FIREITWR ;; Number of interactions of ITWR consumers.
+  INITIAL-TEMPERATURE ;; Initial T parameter for all consumers.
 
-  UG-CONSUMER-FIREIT
-  UG-CONSUMER-FIRE
-  UG-CONSUMER-FIREITWR
-  NB-INTERACTION-FIREIT
-  NB-INTERACTION-FIREITWR
-  INITIAL-TEMPERATURE
-
-  ;; ENUM
-  FIREIT
-  FIRE
-  FIREITWR
-  ;
-  GOOD
-  INTERMITENT
-  OK
-  BAD
-
-  ;;Weigth of the selection methods
-  WI
-  WW
-  WC
+  FIREIT FIREITWR ;; Consumer types.
+  GOOD INTERMITENT OK BAD ;; Provider types.
+  WI WW WC ;; Weigth of the selection methods
 ]
 
 breed [consumers consumer]
@@ -55,90 +41,32 @@ providers-own [
   sigma-p
 ]
 
-to setup
-  clear-all
-
-  ;;set Selection weigth
-  set WI 2
-  set WW 1
-
-  ;; Set Constants
-  set FIREIT 0
-  set FIRE 1
-  set FIREITWR 2
-  set GOOD 0
-  set OK 1
-  set INTERMITENT 2
-  set BAD 3
-
-  set PL-PERFECT 10
-  set PL-GOOD 5
-  set PL-OK 0
-  set PL-BAD -5
-  set PL-WORST -10
-  set NB-PROVIDERS (Npg + Npo + Npi + Npb)
-  set INITIAL-TEMPERATURE 100
-
-  set LAMBDA (- (5 / ln 0.5))
-  set GAMMA-I (- ln 0.5)
-
-  set-default-shape turtles "circle"
-  create-consumers nb-consumers [ setup-consumer FIREIT ] ;; FIREIT model
-  create-consumers nb-consumers [ setup-consumer FIREITWR ] ;; FIRE Model
-  create-providers Npg [ setup-provider GOOD ] ;; good provider
-  create-providers Npo [ setup-provider OK ] ;; ok provider
-  create-providers Npi [ setup-provider INTERMITENT ] ;; intermitent provider
-  create-providers Npb [ setup-provider BAD ] ;; bad provider
-  reset-ticks
-end
-
-to setup-consumer [t-model]
-  set trust-model t-model
-  set color blue
-  set history []
-  set-position
-  set activity-level ((random-float (max-alpha - min-alpha)) + min-alpha)
-  set temperature INITIAL-TEMPERATURE
-end
-
-to setup-provider [x] ;; provider type
-  set color red - x
-  set provider-type x
-  set-position
-  if provider-type = GOOD [
-    set mu-p ((PL-GOOD + PL-PERFECT) / 2)
-    set sigma-p 1
-  ]
-  if provider-type = OK [
-    set mu-p ((PL-GOOD + PL-OK) / 2)
-    set sigma-p 2
-  ]
-  if provider-type = BAD [
-    set mu-p ((PL-OK + PL-WORST) / 2)
-    set sigma-p 2
-  ]
-end
-
-;;;;;;;;;;;;;;;;;;;;;;;
-;;; Main Procedures ;;;
-;;;;;;;;;;;;;;;;;;;;;;;
+;; ----------------------------------
+;; MAIN PROCEDURES
+;; ----------------------------------
 
 to go
   ;; Reset UG sum for both groups of consumers.
   set UG-CONSUMER-FIREIT 0
-  set UG-CONSUMER-FIRE 0
   set UG-CONSUMER-FIREITWR 0
-  ;; Reset number of interaction of the current tick
+  ;; Reset number of interaction for the current tick.
   set NB-INTERACTION-FIREIT 0
   set NB-INTERACTION-FIREITWR 0
 
+  ;; Update position and location of the agents.
+  ;; Some agents may leave the environnement or change position according
+  ;; to the relevant parameters.
   update-turtles
+  ;; In a dynamic environnement, the performance of provider may change
+  ;; as well as their profile.
+  ask providers [
+    update-mu
+    update-profile
+  ]
+  ;; Consumers interact with providers
   ask consumers [
-    ;;show history
-    ;;let empty []
-    ;;let test get-all-witnesses self empty one-of providers 0
-    ;;activity level parameter controls the frequency of interaction of consumers.
-    if random-float 1 < activity-level [
+    ;; Activity level parameter controls the frequency of interaction of consumers.
+    if random-float 1 <= activity-level [
       get-nearby-providers
       ifelse trust-model = FIREIT
       [interact-provider-FIREIT "NA"
@@ -147,104 +75,13 @@ to go
         set NB-INTERACTION-FIREITWR (NB-INTERACTION-FIREITWR + 1)]
     ]
   ]
-  ask providers [
-    update-mu
-    update-profile
-  ]
   tick
 end
 
-to update-mu
-  ;; TODO: Use an M parameter
-  ;; New mu-p must be modified by a delta-mu chosen in the range [-M, +M]
-  if provider-type = GOOD [
-    if random-float 1 < pmuC [
-      set mu-p ((random-float 5) + 5)
-      if mu-p > 10 [set mu-p 10]
-      if mu-p < 5 [set mu-p 5] ] ]
-  if provider-type = OK [
-    if random-float 1 < pmuC [
-      set mu-p (random-float 5)
-      if mu-p > 5 [set mu-p 5]
-      if mu-p < 0 [set mu-p 0] ] ]
-  if provider-type = BAD [
-    if random-float 1 < pmuC [
-      set mu-p ((random-float 10) * -1)
-      if mu-p > 0 [set mu-p 0]
-      if mu-p < -10 [set mu-p -10] ] ]
-end
-
-to update-profile
-  ;; TODO: new mu-p is mean of [PL-GOOD, PL-PERFECT] ?
-  if random-float 1 < pProfileSwitch [
-    let x random 4
-    while [ x = provider-type]
-      [set x random 4]
-    set color red - x
-    set provider-type x
-    if provider-type = GOOD [
-      set mu-p ((PL-GOOD + PL-PERFECT) / 2)
-    ]
-    if provider-type = OK [
-      set mu-p ((PL-OK + PL-GOOD) / 2)
-    ]
-    if provider-type = BAD [
-      set mu-p ((PL-WORST + PL-OK) / 2)
-    ]
-  ]
-end
-
-to update-turtles
-  ;; providers leave the environement
-  let n-providers random (pPPC * NB-PROVIDERS)
-  let provider-list-type []
-  ask n-of n-providers providers [
-    set provider-list-type lput provider-type provider-list-type
-    die
-  ]
-  foreach provider-list-type [x -> create-providers 1 [setup-provider x]]
-  ;; consumers leave the environement
-  let n-consumers random (pCPC * nb-consumers)
-  let consumer-list-type []
-  ask n-of n-consumers consumers [
-    set consumer-list-type lput trust-model consumer-list-type
-    die
-  ]
-  foreach consumer-list-type [x -> create-consumers 1 [setup-consumer x]]
-
-  ;; Change location of consumers and providers
-  ask providers [
-    if random-float 1 < pPLC
-    [move-turtle]
-  ]
-  ask consumers [
-    if random-float 1 < pCLC
-    [move-turtle]
-  ]
-end
-
-to set-position
-  ;; remember that turtles automatically have a random heading when created
-  tilt-up asin (1.0 - random-float 2.0)
-  jump world-size
-end
-
-to move-turtle
-  let r sqrt((xcor ^ 2) + (ycor ^ 2) + (zcor ^ 2))
-  let phi (atan sqrt((xcor ^ 2) + (ycor ^ 2)) zcor)
-  let theta (atan ycor xcor)
-
-  let delta-phi (- deltaPHI + (random-float (2 * deltaPHI)))
-  let delta-theta (- deltaPHI + (random-float (2 * deltaPHI)))
-
-  set phi (phi + delta-phi)
-  set theta (theta + delta-theta)
-
-  set ycor r * (sin phi) * (sin theta)
-  set xcor r * (sin phi) * (cos theta)
-  set zcor r * (cos phi)
-end
-
+;; get-nearby-providers
+;;
+;; Allows consumers to obtain a list of provider located within their
+;; radius of operations `r0`.
 to get-nearby-providers
   let lnp []
   ask providers [
@@ -255,8 +92,15 @@ to get-nearby-providers
   set nearby-providers lnp
 end
 
+;; get-all-witnesses
+;;
+;; Reports a list of the ratings of the closest consumers that
+;; have interacted with `prov`.
+;; @param me Requesting consumer.
+;; @param prev-cons
+;; @param prov
+;; @param currentDeph
 to-report get-all-witnesses [me prev-cons prov currentDeph]
-  ;;reports a list of the ratings of the closest consumers that have interacted with prov
   if currentDeph = WR_nRL [report []]
   set currentDeph 1 + currentDeph
   set prev-cons lput self prev-cons
@@ -278,8 +122,10 @@ to-report get-all-witnesses [me prev-cons prov currentDeph]
   report report-list
 end
 
+;; get-closest-consumers
+;;
+;; Returns a list of the closest consumers with at most `WR_nBF` consumers.
 to-report get-closet-consumers [me previous-consumers]
-  ;;returns a list of the closes consumers with at most WR_nBF consumers
   ;;show previous-consumers
   let lnc []
   ask other consumers [
@@ -287,9 +133,9 @@ to-report get-closet-consumers [me previous-consumers]
       set lnc lput self lnc
     ]
   ]
-  ;;adding me ton previous consumers
+  ;; adding me to previous consumers
   set previous-consumers lput me previous-consumers
-  ;;removing previously explored consumers
+  ;; removing previously explored consumers
   foreach previous-consumers [
     x -> if member? x lnc [
       set lnc remove x lnc
@@ -343,7 +189,9 @@ to interact-provider-FIREIT [selection]
         let local-ratings (get-local-ratings p)
         ifelse length local-ratings = 0
         [set NoTrustValues lput p NoTrustValues]
-        [let p-trust (get-trust local-ratings [])
+        [
+          let p-trust (get-trust local-ratings [])
+          ;;let p-trust (get-it-trust local-ratings)
           ;; Search provider with maximum trust
           if p-trust > best-p-trust [
             set best-p p
@@ -366,7 +214,6 @@ to interact-provider-FIREIT [selection]
         ]
       ]
     ]
-    ;show word "Best p trust " best-p-trust
     ifelse best-p = 0 [
       ;; If no nearby provider has a trust value, choose a random provider
       set chosen-provider (one-of NoTrustValues)
@@ -379,7 +226,6 @@ to interact-provider-FIREIT [selection]
         ;; a1: pick best provider
         ;; a2: pick random provider in the NoTrustValues.
         ;; P(ak) dependent on the current temperature.
-        ;show "Choose between a1 and a2"
         let ER-a1 best-p-trust
         let ER-a2 0
         ifelse nb-interaction = 0 [ set ER-a2 0 ][ set ER-a2 (total-UG-observed / nb-interaction) ]
@@ -390,22 +236,21 @@ to interact-provider-FIREIT [selection]
         ifelse random-float 1 < q1 [
           ;; Chose a1
           set chosen-provider best-p
-          ;show "a1"
         ][
           ;; Chose a2
           set chosen-provider (one-of NoTrustValues)
-          ;show "a2"
         ]
       ]
     ]
     ;; Interact with chosen provider
     ask chosen-provider [ set v-perform perform ]
+    set nb-interaction (nb-interaction + 1)
 
-    ;; Compute average UG observed
-    set total-UG-observed (total-UG-observed + v-perform)
     ;; Add rating to history
     ;; Rating is performance normalized to the range [-1, 1]
     let normalized-perform 2 * ((v-perform - PL-WORST) / (PL-PERFECT - PL-WORST)) - 1
+    ;; Compute average UG observed
+    set total-UG-observed (total-UG-observed + normalized-perform)
 
     set history lput (list chosen-provider normalized-perform ticks) history
     ;; Keep history size at H
@@ -425,9 +270,6 @@ to interact-provider-FIREIT [selection]
 end
 
 to-report TK [ratings weights]
-  ;show ratings
-  ;show weights
-  ;report 0
   let i 0
   let return-value 0
   let weight-sum 0
@@ -446,7 +288,8 @@ to-report rho-K [ratings weights tr-value]
   let rho-DK 0
   let i 0
   ;; Compute rho-DI
-  foreach ratings [ rating ->
+  while [ i != length ratings][
+    let rating (item i ratings)
     set rho-DK (rho-DK + (item i weights * (abs (item 1 rating) - tr-value)))
     set weight-sum (weight-sum + item i weights)
     set i (i + 1)
@@ -470,28 +313,37 @@ to-report get-it-trust [local-ratings]
   report TI
 end
 
-to-report get-trust [wr-ratings local-ratings]
-  let uui 0
-  let uuw 0
-  if length local-ratings > 0[
+to-report get-trust [local-ratings wr-ratings]
+  let t-values-sum 0
+  let weight-sum 1
+
+  if length local-ratings > 0 [
     let weights-I []
     foreach local-ratings [ rating ->
       let wI-r (e ^ ((ticks - (item 2 rating)) / LAMBDA))
       set weights-I lput wI-r weights-I
     ]
     let TI (TK local-ratings weights-I)
-    set uui (WI * rho-K local-ratings weights-I TI )
+    let uui (WI * rho-K local-ratings weights-I TI)
+    if uui != 0 [
+     set t-values-sum (t-values-sum + (TI * uui))
+     set weight-sum uui
+    ]
   ]
-  if length wr-ratings > 0[
+  if length wr-ratings > 0 [
     let weights-WR []
     foreach wr-ratings [ rating ->
       let wR-r (e ^ ((ticks - (item 2 rating)) / LAMBDA))
       set weights-WR lput wR-r weights-WR
     ]
     let WR (TK wr-ratings weights-WR)
-    set uuw  (WW * rho-K wr-ratings weights-WR WR)
+    let uuw  (WW * rho-K wr-ratings weights-WR WR)
+    if uuw != 0 [
+     set t-values-sum (t-values-sum + (WR * uuw))
+     set weight-sum (weight-sum + uuw)
+    ]
   ]
-  report uuw + uui
+  report t-values-sum / weight-sum
 end
 
 to-report get-local-ratings [p]
@@ -527,16 +379,6 @@ to-report perform
   if return-value < -10 [ set return-value -10 ]
 
   report return-value
-end
-
-to-report get-mean-temp
-  let mean-t 0
-  ask consumers [
-    if trust-model = FIREIT [
-      set mean-t (mean-t + temperature)
-    ]
-  ]
-  report mean-t / nb-consumers
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
@@ -938,7 +780,7 @@ WR_nRL
 WR_nRL
 1
 10
-5.0
+2.0
 1
 1
 NIL
@@ -953,6 +795,17 @@ Variables specific to WR module
 11
 0.0
 1
+
+SWITCH
+245
+485
+348
+518
+WR?
+WR?
+1
+1
+-1000
 
 @#$#@#$#@
 @#$#@#$#@

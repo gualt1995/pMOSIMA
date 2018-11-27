@@ -1,0 +1,13 @@
+
+;; get-mean-temp
+;; 
+;; Returns the mean temperature value among IT consumers.
+to-report get-mean-temp
+  let mean-t 0
+  ask consumers [
+    if trust-model = FIREIT [
+      set mean-t (mean-t + temperature)
+    ]
+  ]
+  report mean-t / nb-consumers
+end
