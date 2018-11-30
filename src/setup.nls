@@ -14,6 +14,7 @@ to setup
   set FIREIT 0
   set FIREITWR 1
   set FIREITCR 2
+  set FIRE 3
   set GOOD 0
   set OK 1
   set INTERMITENT 2
@@ -35,6 +36,7 @@ to setup
   if IT? [create-consumers nb-consumers [ setup-consumer FIREIT ]] ;; FIREIT model
   if WR? [create-consumers nb-consumers [ setup-consumer FIREITWR ]] ;; FIREITWR Model
   if CR? [create-consumers nb-consumers [ setup-consumer FIREITCR ]] ;; FIREITCR Model
+  if FIRE? [create-consumers nb-consumers [ setup-consumer FIRE ]] ;; FIREITCR Model
   create-providers Npg [ setup-provider GOOD ] ;; good provider
   create-providers Npo [ setup-provider OK ] ;; ok provider
   create-providers Npi [ setup-provider INTERMITENT ] ;; intermitent provider
@@ -69,20 +71,26 @@ end
 ;; Initializes a provider based on its type. 
 ;; @param x Provider type.
 to setup-provider [x] ;; provider type
+  if liarProportion > random-float 1 [
+   set isliar? true
+  ] 
   set color red - x
   set provider-type x
   set-position
-  set history []
+  set history-c []
   if provider-type = GOOD [
-    set mu-p ((PL-GOOD + PL-PERFECT) / 2)
+    set mu-p random-float (PL-PERFECT - PL-GOOD) + PL-GOOD
+    ;set mu-p ((PL-GOOD + PL-PERFECT) / 2)
     set sigma-p 1
   ]
   if provider-type = OK [
-    set mu-p ((PL-GOOD + PL-OK) / 2)
+    set mu-p random-float (PL-GOOD - PL-OK) + PL-OK
+    ;set mu-p ((PL-GOOD + PL-OK) / 2)
     set sigma-p 2
   ]
   if provider-type = BAD [
-    set mu-p ((PL-OK + PL-WORST) / 2)
+    ;set mu-p ((PL-OK + PL-WORST) / 2)
+    set mu-p random-float (PL-OK - PL-WORST) + PL-WORST
     set sigma-p 2
   ]
 end

@@ -11,15 +11,17 @@ globals [
   GAMMA-I ;; Relability function parameter for IT Trust.
   GAMMA-W ;; Relability function parameter for WR Trust.
 
+  UG-CONSUMER-FIRE ;; Total reported UG for FIRE consumers in one iteration.
   UG-CONSUMER-FIREIT ;; Total reported UG for IT consumers in one iteration.
   UG-CONSUMER-FIREITWR ;; Total reported UG for ITWR consumers in one iteration.
-  UG-CONSUMER-FIREITCR ;; Total reported UG for ITWR consumers in one iteration.
+  UG-CONSUMER-FIREITCR ;; Total reported UG for ITCR consumers in one iteration.
+  NB-INTERACTION-FIRE ;; Number of interactions of FIRE consumers.
   NB-INTERACTION-FIREIT ;; Number of interactions of IT consumers.
   NB-INTERACTION-FIREITWR ;; Number of interactions of ITWR consumers.
-  NB-INTERACTION-FIREITCR ;; Number of interactions of ITWR consumers.
+  NB-INTERACTION-FIREITCR ;; Number of interactions of ITCR consumers.
   INITIAL-TEMPERATURE ;; Initial T parameter for all consumers.
 
-  FIREIT FIREITWR FIREITCR;; Consumer types.
+  FIREIT FIREITWR FIREITCR FIRE;; Consumer types.
   GOOD INTERMITENT OK BAD ;; Provider types.
   WI WW WC ;; Weigth of the selection methods
 ]
@@ -38,7 +40,8 @@ consumers-own [
 ]
 
 providers-own [
-  history
+  isliar?
+  history-c
   provider-type
   mu-p
   sigma-p
@@ -53,11 +56,12 @@ to go
   set UG-CONSUMER-FIREIT 0
   set UG-CONSUMER-FIREITWR 0
   set UG-CONSUMER-FIREITCR 0
+  set UG-CONSUMER-FIRE 0
   ;; Reset number of interaction for the current tick.
   set NB-INTERACTION-FIREIT 0
   set NB-INTERACTION-FIREITWR 0
   set NB-INTERACTION-FIREITCR 0
-
+  set NB-INTERACTION-FIRE 0
   ;; Update position and location of the agents.
   ;; Some agents may leave the environnement or change position according
   ;; to the relevant parameters.
@@ -73,18 +77,7 @@ to go
     ;; Activity level parameter controls the frequency of interaction of consumers.
     if random-float 1 <= activity-level [
       get-nearby-providers
-      ifelse trust-model = FIREIT
-      [interact-provider-FIREIT "NA"
-        set NB-INTERACTION-FIREIT (NB-INTERACTION-FIREIT + 1)
-      ][
-        ifelse trust-model = FIREITWR[
-          interact-provider-FIREIT "WR"
-          set NB-INTERACTION-FIREITWR (NB-INTERACTION-FIREITWR + 1)
-        ][
-          interact-provider-FIREIT "CR"
-          set NB-INTERACTION-FIREITCR (NB-INTERACTION-FIREITCR + 1)
-        ]
-      ]
+      interact-provider trust-model
     ]
   ]
   tick
@@ -188,7 +181,7 @@ to-report ask-ratings [me p]
     [report 0]
 end
 
-to interact-provider-FIREIT [selection]
+to interact-provider [selection]
   if length nearby-providers > 0 [
     let v-perform 0
     let chosen-provider 0
@@ -200,42 +193,25 @@ to interact-provider-FIREIT [selection]
     foreach nearby-providers [ p ->
       ;; Get local ratings corresponding to provider p
       let local-ratings (get-local-ratings p)
-      ifelse selection = "NA"[
-        ifelse length local-ratings = 0[
-          set NoTrustValues lput p NoTrustValues
-        ][
-          let p-trust (get-trust local-ratings [] [])
-          ;;let p-trust (get-it-trust local-ratings)
-          ;; Search provider with maximum trust
-          if p-trust > best-p-trust [
-            set best-p p
-            set best-p-trust p-trust
-          ]
-        ]
-      ][ifelse selection = "WR"[
+      let wr-ratings []
+      let certified-ratings []
+      if selection = FIREITWR or selection = FIRE [
           ;; Get ratings of wtinesses
-          let wr-ratings (get-wr-ratings p )
-          ifelse (length local-ratings = 0) and (length wr-ratings = 0)[
-            set NoTrustValues lput p NoTrustValues
-          ][
-            let p-trust (get-trust local-ratings wr-ratings [])
-            if p-trust > best-p-trust [
-              set best-p p
-              set best-p-trust p-trust
-            ]
-          ]
-        ][
-          ;;get certification from provider
-          let certified-ratings (get-certified-ratings p )
-          ifelse (length local-ratings = 0) and (length certified-ratings = 0)[
-            set NoTrustValues lput p NoTrustValues
-          ][
-            let p-trust (get-trust local-ratings [] certified-ratings)
-            if p-trust > best-p-trust [
-              set best-p p
-              set best-p-trust p-trust
-            ]
-          ]
+          set wr-ratings (get-wr-ratings p)
+      ]
+      if selection = FIREITCR or selection = FIRE [
+        ;;get certification from provider
+        set certified-ratings get-certified-ratings p
+      ]
+      ifelse (length local-ratings = 0)
+      and (length certified-ratings = 0)
+      and (length wr-ratings = 0) [
+          set NoTrustValues lput p NoTrustValues
+      ][
+        let p-trust (get-trust local-ratings wr-ratings certified-ratings)
+        if p-trust > best-p-trust [
+          set best-p p
+          set best-p-trust p-trust
         ]
       ]
     ]
@@ -288,14 +264,21 @@ to interact-provider-FIREIT [selection]
     if temperature < 1 [ set temperature 1 ]
 
     ;; Add to TOTAL UG of group for plotting
-    ifelse selection = "NA"
-    [set UG-CONSUMER-FIREIT (UG-CONSUMER-FIREIT + v-perform)]
-    [
-      ifelse selection = "WR"[
-        set UG-CONSUMER-FIREITWR (UG-CONSUMER-FIREITWR + v-perform)
-      ][
-        set UG-CONSUMER-FIREITCR (UG-CONSUMER-FIREITCR + v-perform)
-      ]
+    if selection = FIREIT[
+      set UG-CONSUMER-FIREIT (UG-CONSUMER-FIREIT + v-perform)
+      set NB-INTERACTION-FIREIT (NB-INTERACTION-FIREIT + 1)
+    ]
+    if selection = FIREITWR[
+      set UG-CONSUMER-FIREITWR (UG-CONSUMER-FIREITWR + v-perform)
+      set NB-INTERACTION-FIREITWR (NB-INTERACTION-FIREITWR + 1)
+    ]
+    if selection = FIREITCR[
+      set UG-CONSUMER-FIREITCR (UG-CONSUMER-FIREITCR + v-perform)
+      set NB-INTERACTION-FIREITCR (NB-INTERACTION-FIREITCR + 1)
+    ]
+    if selection = FIRE[
+      set UG-CONSUMER-FIRE (UG-CONSUMER-FIRE + v-perform)
+      set NB-INTERACTION-FIRE (NB-INTERACTION-FIRE + 1)
     ]
   ]
 end
@@ -345,10 +328,6 @@ to-report get-trust [local-ratings wr-ratings certified-ratings]
       set weights-I lput wI-r weights-I
       set i (i + 1)
     ]
-    ;foreach local-ratings [ rating ->
-    ;  let wI-r (e ^ ((ticks - (item 2 rating)) / LAMBDA))
-    ;  set weights-I lput wI-r weights-I
-    ;]
     let TI (TK local-ratings weights-I)
     let uui (WI * rho-K local-ratings weights-I TI)
     if uui != 0 [
@@ -358,9 +337,12 @@ to-report get-trust [local-ratings wr-ratings certified-ratings]
   ]
   if length wr-ratings > 0 [
     let weights-WR []
-    foreach wr-ratings [ rating ->
+    let i 0
+    while [i != length wr-ratings][
+      let rating (item i wr-ratings)
       let wR-r (e ^ ((ticks - (item 2 rating)) / LAMBDA))
       set weights-WR lput wR-r weights-WR
+      set i (i + 1)
     ]
     let WR (TK wr-ratings weights-WR)
     let uuw  (WW * rho-K wr-ratings weights-WR WR)
@@ -372,9 +354,12 @@ to-report get-trust [local-ratings wr-ratings certified-ratings]
 
   if length certified-ratings > 0 [
     let weights-CR []
-    foreach certified-ratings [ rating ->
+    let i 0
+    while [i != length certified-ratings][
+      let rating (item i certified-ratings)
       let wR-cr (e ^ ((ticks - (item 2 rating)) / LAMBDA))
       set weights-CR lput wR-cr weights-CR
+      set i (i + 1)
     ]
     let CR (TK certified-ratings weights-CR)
     let uuc  (WC * rho-K certified-ratings weights-CR CR)
@@ -408,11 +393,17 @@ to-report get-wr-ratings [p]
 end
 
 to-report get-certified-ratings [p]
-  let return-value 0
-  ask p[
-    set return-value history
+  let return-value []
+  ask p [
+    set return-value history-c
+    if isliar? = true [
+      let history-lie []
+      foreach return-value[ r ->
+        set history-lie lput replace-item 1 r 1 history-lie
+      ]
+      set return-value history-lie
+    ]
   ]
-  ;;show length return-value
   report return-value
 end
 
@@ -428,14 +419,14 @@ to-report perform
   if return-value < -10 [ set return-value -10 ]
   ;;calucating rating from my performance
   let normalized-perform 2 * ((return-value - PL-WORST) / (PL-PERFECT - PL-WORST)) - 1
-  ifelse length history < H [
-    set history lput (list self normalized-perform ticks) history
+  ifelse length history-c < H [
+    set history-c lput (list self normalized-perform ticks) history-c
   ][
     ;;removing lowest value to add this one
-    let min-history item 1 item 0 history
+    let min-history item 1 item 0 history-c
     let min-index 0
     let cpt 0
-    foreach history[ i ->
+    foreach history-c [ i ->
       if item 1 i < min-history[
         set min-history item 1 i
         set min-index cpt
@@ -443,7 +434,7 @@ to-report perform
       set cpt cpt + 1
     ]
     if normalized-perform > min-history[
-      set history replace-item min-index history (list self normalized-perform ticks)
+      set history-c replace-item min-index history-c (list self normalized-perform ticks)
     ]
   ]
   report return-value
@@ -536,10 +527,10 @@ SLIDER
 178
 r0
 r0
-0.1
-10
+0
+20
 10.0
-0.1
+1
 1
 NIL
 HORIZONTAL
@@ -777,10 +768,10 @@ Number of consumers in each group
 1
 
 PLOT
-755
-15
-1330
-300
+400
+230
+975
+515
 UG
 NIL
 NIL
@@ -795,41 +786,24 @@ PENS
 "CONTROL" 1.0 0 -16777216 true "" "plot (UG-CONSUMER-FIREIT / NB-INTERACTION-FIREIT)"
 "WR" 1.0 0 -2674135 true "" "plot (UG-CONSUMER-FIREITWR / NB-INTERACTION-FIREITWR)"
 "CR" 1.0 0 -14439633 true "" "plot (UG-CONSUMER-FIREITCR / NB-INTERACTION-FIREITCR)"
+"FIRE" 1.0 0 -14454117 true "" "plot (UG-CONSUMER-FIRE / NB-INTERACTION-FIRE)"
 
 MONITOR
-415
-230
-607
-271
+395
+185
+587
+226
 NIL
 NB-INTERACTION-FIREIT
 17
 1
 10
 
-PLOT
-390
-275
-740
-505
-Mean T FIREIT
-NIL
-NIL
-0.0
-10.0
-0.0
-10.0
-true
-false
-"" ""
-PENS
-"default" 1.0 0 -16777216 true "" "plot get-mean-temp"
-
 SLIDER
-10
-345
-182
-378
+15
+355
+185
+388
 WR_nBF
 WR_nBF
 1
@@ -841,10 +815,10 @@ NIL
 HORIZONTAL
 
 SLIDER
-10
-385
-182
-418
+15
+395
+187
+428
 WR_nRL
 WR_nRL
 1
@@ -867,9 +841,9 @@ Variables specific to WR module
 
 SWITCH
 270
-315
+320
 373
-348
+353
 WR?
 WR?
 1
@@ -889,14 +863,40 @@ CR?
 
 SWITCH
 270
-395
+390
 373
-428
+423
 IT?
 IT?
 0
 1
 -1000
+
+SWITCH
+270
+425
+373
+458
+FIRE?
+FIRE?
+1
+1
+-1000
+
+SLIDER
+15
+435
+187
+468
+liarProportion
+liarProportion
+0
+1
+0.0
+0.1
+1
+NIL
+HORIZONTAL
 
 @#$#@#$#@
 @#$#@#$#@
