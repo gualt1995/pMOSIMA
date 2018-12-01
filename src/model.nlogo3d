@@ -21,6 +21,9 @@ globals [
   NB-INTERACTION-FIREITCR ;; Number of interactions of ITCR consumers.
   INITIAL-TEMPERATURE ;; Initial T parameter for all consumers.
 
+  RHO-I-SUM RHO-W-SUM RHO-C-SUM RHO-T-SUM
+  NB-EVAL
+
   FIREIT FIREITWR FIREITCR FIRE;; Consumer types.
   GOOD INTERMITENT OK BAD ;; Provider types.
   WI WW WC ;; Weigth of the selection methods
@@ -62,6 +65,12 @@ to go
   set NB-INTERACTION-FIREITWR 0
   set NB-INTERACTION-FIREITCR 0
   set NB-INTERACTION-FIRE 0
+  ;; Reset rho vars
+  set RHO-I-SUM 0
+  set RHO-W-SUM 0
+  set RHO-C-SUM 0
+  set RHO-T-SUM 0
+  set NB-EVAL 0
   ;; Update position and location of the agents.
   ;; Some agents may leave the environnement or change position according
   ;; to the relevant parameters.
@@ -108,7 +117,7 @@ end
 ;; @param prev-cons
 ;; @param prov
 ;; @param currentDeph
-to-report get-all-witnesses [me prev-cons prov currentDeph]
+to-report get-all-witness-ratings [me prev-cons prov currentDeph]
   if currentDeph = WR_nRL [report []]
   set currentDeph 1 + currentDeph
   set prev-cons lput self prev-cons
@@ -119,7 +128,7 @@ to-report get-all-witnesses [me prev-cons prov currentDeph]
     ;;show turtle-set x
     let rates ask-ratings turtle-set x prov
     ifelse rates = 0
-    [ let tmp get-all-witnesses x prev-cons prov currentDeph
+    [ let tmp get-all-witness-ratings x prev-cons prov currentDeph
       foreach tmp [y -> set report-list lput y report-list]
     ][
       let tmp rates
@@ -137,7 +146,7 @@ to-report get-closet-consumers [me previous-consumers]
   ;;show previous-consumers
   let lnc []
   ask other consumers [
-    if distance me < r0 [
+    if distance me < r0 and trust-model = [trust-model] of myself [
       set lnc lput self lnc
     ]
   ]
@@ -318,6 +327,8 @@ end
 to-report get-trust [local-ratings wr-ratings certified-ratings]
   let t-values-sum 0
   let weight-sum 1
+  set NB-EVAL (NB-EVAL + 1)
+  let rho-weight-sum 1
 
   if length local-ratings > 0 [
     let weights-I []
@@ -329,10 +340,13 @@ to-report get-trust [local-ratings wr-ratings certified-ratings]
       set i (i + 1)
     ]
     let TI (TK local-ratings weights-I)
-    let uui (WI * rho-K local-ratings weights-I TI)
+    let Rho rho-K local-ratings weights-I TI
+    set RHO-I-SUM (RHO-I-SUM + Rho)
+    let uui (WI * Rho)
     if uui != 0 [
      set t-values-sum (t-values-sum + (TI * uui))
      set weight-sum uui
+     set rho-weight-sum WI
     ]
   ]
   if length wr-ratings > 0 [
@@ -345,10 +359,13 @@ to-report get-trust [local-ratings wr-ratings certified-ratings]
       set i (i + 1)
     ]
     let WR (TK wr-ratings weights-WR)
-    let uuw  (WW * rho-K wr-ratings weights-WR WR)
+    let Rho rho-K wr-ratings weights-WR WR
+    set RHO-W-SUM (RHO-W-SUM + Rho)
+    let uuw  (WW * Rho)
     if uuw != 0 [
      set t-values-sum (t-values-sum + (WR * uuw))
      set weight-sum (weight-sum + uuw)
+     set rho-weight-sum (rho-weight-sum + WW)
     ]
   ]
 
@@ -362,12 +379,16 @@ to-report get-trust [local-ratings wr-ratings certified-ratings]
       set i (i + 1)
     ]
     let CR (TK certified-ratings weights-CR)
-    let uuc  (WC * rho-K certified-ratings weights-CR CR)
+    let Rho rho-K certified-ratings weights-CR CR
+    set RHO-C-SUM (RHO-C-SUM + Rho)
+    let uuc  (WC * Rho)
     if uuc != 0 [
      set t-values-sum (t-values-sum + (CR * uuc))
      set weight-sum (weight-sum + uuc)
+     set rho-weight-sum (rho-weight-sum + WC)
     ]
   ]
+  set RHO-T-SUM (RHO-T-SUM + (weight-sum / rho-weight-sum))
   report t-values-sum / weight-sum
 end
 
@@ -383,7 +404,7 @@ end
 
 to-report get-wr-ratings [p]
   let wr-ratings []
-  let witnesses get-all-witnesses self [] p 0
+  let witnesses get-all-witness-ratings self [] p 0
   foreach witnesses [ r ->
     if p = (item 0 r) [
       set wr-ratings lput r wr-ratings
@@ -529,7 +550,7 @@ r0
 r0
 0
 20
-10.0
+13.0
 1
 1
 NIL
@@ -768,10 +789,10 @@ Number of consumers in each group
 1
 
 PLOT
-400
-230
-975
-515
+420
+260
+995
+545
 UG
 NIL
 NIL
@@ -787,17 +808,6 @@ PENS
 "WR" 1.0 0 -2674135 true "" "plot (UG-CONSUMER-FIREITWR / NB-INTERACTION-FIREITWR)"
 "CR" 1.0 0 -14439633 true "" "plot (UG-CONSUMER-FIREITCR / NB-INTERACTION-FIREITCR)"
 "FIRE" 1.0 0 -14454117 true "" "plot (UG-CONSUMER-FIRE / NB-INTERACTION-FIRE)"
-
-MONITOR
-395
-185
-587
-226
-NIL
-NB-INTERACTION-FIREIT
-17
-1
-10
 
 SLIDER
 15
@@ -823,7 +833,7 @@ WR_nRL
 WR_nRL
 1
 10
-2.0
+5.0
 1
 1
 NIL
@@ -857,7 +867,7 @@ SWITCH
 388
 CR?
 CR?
-0
+1
 1
 -1000
 
@@ -897,6 +907,38 @@ liarProportion
 1
 NIL
 HORIZONTAL
+
+PLOT
+785
+10
+1255
+225
+Reliability factors
+NIL
+NIL
+0.0
+200.0
+0.0
+1.0
+true
+true
+"" ""
+PENS
+"Rho-I" 1.0 0 -16777216 true "" "plot RHO-I-SUM / NB-EVAL"
+"Rho-W" 1.0 0 -2674135 true "" "plot RHO-W-SUM / NB-EVAL"
+"Rho-C" 1.0 0 -13840069 true "" "plot RHO-C-SUM / NB-EVAL"
+"Rho-T" 1.0 0 -14454117 true "" "plot RHO-T-SUM / NB-EVAL"
+
+MONITOR
+440
+200
+497
+245
+NIL
+NB-EVAL
+17
+1
+11
 
 @#$#@#$#@
 @#$#@#$#@
