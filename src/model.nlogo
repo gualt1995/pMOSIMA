@@ -1,0 +1,1259 @@
+__includes [
+  "setup.nls"
+  "dynamic.nls"
+  "utils.nls"
+]
+
+globals [
+  PL-PERFECT PL-GOOD PL-OK PL-BAD PL-WORST ;; Bounds on provider performance.
+  NB-PROVIDERS ;; Total number of providers.
+  LAMBDA ;; IT recency scaling factor.
+  GAMMA-I ;; Relability function parameter for IT Trust.
+  GAMMA-W ;; Relability function parameter for WR Trust.
+
+  UG-CONSUMER-FIRE ;; Total reported UG for FIRE consumers in one iteration.
+  UG-CONSUMER-FIREIT ;; Total reported UG for IT consumers in one iteration.
+  UG-CONSUMER-FIREITWR ;; Total reported UG for ITWR consumers in one iteration.
+  UG-CONSUMER-FIREITCR ;; Total reported UG for ITCR consumers in one iteration.
+  NB-INTERACTION-FIRE ;; Number of interactions of FIRE consumers.
+  NB-INTERACTION-FIREIT ;; Number of interactions of IT consumers.
+  NB-INTERACTION-FIREITWR ;; Number of interactions of ITWR consumers.
+  NB-INTERACTION-FIREITCR ;; Number of interactions of ITCR consumers.
+  INITIAL-TEMPERATURE ;; Initial T parameter for all consumers.
+
+  RHO-I-SUM RHO-W-SUM RHO-C-SUM RHO-T-SUM
+  NB-EVAL
+
+  FIREIT FIREITWR FIREITCR FIRE;; Consumer types.
+  GOOD INTERMITENT OK BAD ;; Provider types.
+  WI WW WC ;; Weigth of the selection methods
+]
+
+breed [consumers consumer]
+breed [providers provider]
+
+consumers-own [
+  trust-model
+  nearby-providers
+  history
+  activity-level
+  temperature
+  total-UG-observed
+  nb-interaction
+]
+
+providers-own [
+  isliar?
+  history-c
+  provider-type
+  mu-p
+  sigma-p
+]
+
+;; ----------------------------------
+;; MAIN PROCEDURES
+;; ----------------------------------
+
+to go
+  ;; Reset UG sum for both groups of consumers.
+  set UG-CONSUMER-FIREIT 0
+  set UG-CONSUMER-FIREITWR 0
+  set UG-CONSUMER-FIREITCR 0
+  set UG-CONSUMER-FIRE 0
+  ;; Reset number of interaction for the current tick.
+  set NB-INTERACTION-FIREIT 0
+  set NB-INTERACTION-FIREITWR 0
+  set NB-INTERACTION-FIREITCR 0
+  set NB-INTERACTION-FIRE 0
+  ;; Reset rho vars
+  set RHO-I-SUM 0
+  set RHO-W-SUM 0
+  set RHO-C-SUM 0
+  set RHO-T-SUM 0
+  set NB-EVAL 0
+  ;; Update position and location of the agents.
+  ;; Some agents may leave the environnement or change position according
+  ;; to the relevant parameters.
+  update-turtles
+  ;; In a dynamic environnement, the performance of provider may change
+  ;; as well as their profile.
+  ask providers [
+    update-mu
+    update-profile
+  ]
+  ;; Consumers interact with providers
+  ask consumers [
+    ;; Activity level parameter controls the frequency of interaction of consumers.
+    if random-float 1 <= activity-level [
+      get-nearby-providers
+      interact-provider trust-model
+    ]
+  ]
+  tick
+  if ticks > 200 [
+   stop
+  ]
+end
+
+;; get-nearby-providers
+;;
+;; Allows consumers to obtain a list of provider located within their
+;; radius of operations `r0`.
+to get-nearby-providers
+  let lnp []
+  ask providers [
+    if distance myself < r0 [
+      set lnp lput self lnp
+    ]
+  ]
+  set nearby-providers lnp
+end
+
+;; get-all-witnesses
+;;
+;; Reports a list of the ratings of the closest consumers that
+;; have interacted with `prov`.
+;; @param me Requesting consumer.
+;; @param prev-cons
+;; @param prov
+;; @param currentDeph
+to-report get-all-witness-ratings [me prev-cons prov currentDeph]
+  if currentDeph = WR_nRL [report []]
+  set currentDeph 1 + currentDeph
+  set prev-cons lput self prev-cons
+  let closest-cons get-closet-consumers me prev-cons
+  let report-list []
+  ;;show closest-cons
+  foreach closest-cons [x ->
+    ;;show turtle-set x
+    let rates ask-ratings turtle-set x prov
+    ifelse rates = 0
+    [ let tmp get-all-witness-ratings x prev-cons prov currentDeph
+      foreach tmp [y -> set report-list lput y report-list]
+    ][
+      let tmp rates
+      foreach tmp [y -> set report-list lput y report-list]
+    ]
+  ]
+  ;;show report-list ;;display for debuging
+  report report-list
+end
+
+;; get-closest-consumers
+;;
+;; Returns a list of the closest consumers with at most `WR_nBF` consumers.
+to-report get-closet-consumers [me previous-consumers]
+  ;;show previous-consumers
+  let lnc []
+  ask other consumers [
+    if distance me < r0 and trust-model = [trust-model] of myself [
+      set lnc lput self lnc
+    ]
+  ]
+  ;; adding me to previous consumers
+  set previous-consumers lput me previous-consumers
+  ;; removing previously explored consumers
+  foreach previous-consumers [
+    x -> if member? x lnc [
+      set lnc remove x lnc
+    ]
+  ]
+  ;; finding the closest consumers (at most WR_nBF)
+  let closest-consumers []
+  let nbc 0
+  while [length lnc > 0 and nbc < WR_nBF] [
+    let tmpc min-one-of turtle-set lnc [distance me]
+    set closest-consumers lput tmpc closest-consumers
+    set lnc remove tmpc lnc
+    set nbc nbc + 1
+  ]
+  ;;show closest-consumers
+  report closest-consumers
+end
+
+to-report ask-ratings [me p]
+  ;;reports providers in history that match p or 0 if none are found*
+  let matched []
+  ask me [
+    if length history > 0[
+      ;;show history
+    ]
+    ;; adding the turtle with its rating in the list
+    foreach history [x ->
+      if item 0 x = p [
+        set matched lput x matched
+      ]
+    ]
+  ]
+  ifelse length matched > 0
+    [report matched]
+    [report 0]
+end
+
+to interact-provider [selection]
+  if length nearby-providers > 0 [
+    let v-perform 0
+    let chosen-provider 0
+
+    ;; Calculate trust values
+    let NoTrustValues []
+    let best-p 0
+    let best-p-trust -2
+    foreach nearby-providers [ p ->
+      ;; Get local ratings corresponding to provider p
+      let local-ratings (get-local-ratings p)
+      let wr-ratings []
+      let certified-ratings []
+      if selection = FIREITWR or selection = FIRE [
+          ;; Get ratings of wtinesses
+          set wr-ratings (get-wr-ratings p)
+      ]
+      if selection = FIREITCR or selection = FIRE [
+        ;;get certification from provider
+        set certified-ratings get-certified-ratings p
+      ]
+      ifelse (length local-ratings = 0)
+      and (length certified-ratings = 0)
+      and (length wr-ratings = 0) [
+          set NoTrustValues lput p NoTrustValues
+      ][
+        let p-trust (get-trust local-ratings wr-ratings certified-ratings)
+        if p-trust > best-p-trust [
+          set best-p p
+          set best-p-trust p-trust
+        ]
+      ]
+    ]
+    ifelse best-p = 0 [
+      ;; If no nearby provider has a trust value, choose a random provider
+      set chosen-provider (one-of NoTrustValues)
+    ][
+      ifelse length NoTrustValues = 0 [
+        ;; If all neighborhood has been explored then pick best neighbor.
+        set chosen-provider best-p
+      ][
+        ;; Otherwise choose between actions a1 and a2:
+        ;; a1: pick best provider
+        ;; a2: pick random provider in the NoTrustValues.
+        ;; P(ak) dependent on the current temperature.
+        let ER-a1 best-p-trust
+        let ER-a2 0
+        ifelse nb-interaction = 0 [ set ER-a2 0 ][ set ER-a2 (total-UG-observed / nb-interaction) ]
+        let exp-a1 (e ^ (ER-a1 / temperature))
+        let exp-a2 (e ^ (ER-a2 / temperature))
+        let q1 (exp-a1 / (exp-a1 + exp-a2))
+
+        ifelse random-float 1 < q1 [
+          ;; Chose a1
+          set chosen-provider best-p
+        ][
+          ;; Chose a2
+          set chosen-provider (one-of NoTrustValues)
+        ]
+      ]
+    ]
+    ;; Interact with chosen provider
+    ask chosen-provider [ set v-perform perform ]
+    set nb-interaction (nb-interaction + 1)
+
+    ;; Add rating to history
+    ;; Rating is performance normalized to the range [-1, 1]
+    let normalized-perform 2 * ((v-perform - PL-WORST) / (PL-PERFECT - PL-WORST)) - 1
+    ;; Compute average UG observed
+    set total-UG-observed (total-UG-observed + normalized-perform)
+
+    set history lput (list chosen-provider normalized-perform ticks) history
+    ;; Keep history size at H
+    if length history > H [
+      set history but-first history
+    ]
+
+    ;; Update Temperature for future interactions
+    set temperature (temperature - 1)
+    if temperature < 1 [ set temperature 1 ]
+
+    ;; Add to TOTAL UG of group for plotting
+    if selection = FIREIT[
+      set UG-CONSUMER-FIREIT (UG-CONSUMER-FIREIT + v-perform)
+      set NB-INTERACTION-FIREIT (NB-INTERACTION-FIREIT + 1)
+    ]
+    if selection = FIREITWR[
+      set UG-CONSUMER-FIREITWR (UG-CONSUMER-FIREITWR + v-perform)
+      set NB-INTERACTION-FIREITWR (NB-INTERACTION-FIREITWR + 1)
+    ]
+    if selection = FIREITCR[
+      set UG-CONSUMER-FIREITCR (UG-CONSUMER-FIREITCR + v-perform)
+      set NB-INTERACTION-FIREITCR (NB-INTERACTION-FIREITCR + 1)
+    ]
+    if selection = FIRE[
+      set UG-CONSUMER-FIRE (UG-CONSUMER-FIRE + v-perform)
+      set NB-INTERACTION-FIRE (NB-INTERACTION-FIRE + 1)
+    ]
+  ]
+end
+
+to-report TK [ratings weights]
+  let i 0
+  let return-value 0
+  let weight-sum 0
+  while [ i != length ratings ][
+    let rating (item i ratings)
+    set return-value return-value + ((item 1 rating) * (item i weights))
+    set weight-sum weight-sum + (item i weights)
+    set i (i + 1)
+  ]
+  set return-value (return-value / weight-sum)
+  report return-value
+end
+
+to-report rho-K [ratings weights tr-value]
+  let weight-sum 0
+  let rho-DK 0
+  let i 0
+  ;; Compute rho-DI
+  while [ i != length ratings][
+    let rating (item i ratings)
+    set rho-DK (rho-DK + (item i weights * (abs (item 1 rating) - tr-value)))
+    set weight-sum (weight-sum + item i weights)
+    set i (i + 1)
+  ]
+  set rho-DK (1 - (1 / 2) * (rho-DK / weight-sum))
+  ;; Compute rho-RK
+  let rho-RK (1 - e ^ (- GAMMA-I * weight-sum))
+  ;; Return rho-K
+  report rho-DK * rho-RK
+end
+
+to-report get-trust [local-ratings wr-ratings certified-ratings]
+  let t-values-sum 0
+  let weight-sum 1
+  set NB-EVAL (NB-EVAL + 1)
+  let rho-weight-sum 1
+
+  if length local-ratings > 0 [
+    let weights-I []
+    let i 0
+    while [ i != length local-ratings ][
+      let rating (item i local-ratings)
+      let wI-r (e ^ ((ticks - (item 2 rating)) / LAMBDA))
+      set weights-I lput wI-r weights-I
+      set i (i + 1)
+    ]
+    let TI (TK local-ratings weights-I)
+    let Rho rho-K local-ratings weights-I TI
+    set RHO-I-SUM (RHO-I-SUM + Rho)
+    let uui (WI * Rho)
+    if uui != 0 [
+     set t-values-sum (t-values-sum + (TI * uui))
+     set weight-sum uui
+     set rho-weight-sum WI
+    ]
+  ]
+  if length wr-ratings > 0 [
+    let weights-WR []
+    let i 0
+    while [i != length wr-ratings][
+      let rating (item i wr-ratings)
+      let wR-r (e ^ ((ticks - (item 2 rating)) / LAMBDA))
+      set weights-WR lput wR-r weights-WR
+      set i (i + 1)
+    ]
+    let WR (TK wr-ratings weights-WR)
+    let Rho rho-K wr-ratings weights-WR WR
+    set RHO-W-SUM (RHO-W-SUM + Rho)
+    let uuw  (WW * Rho)
+    if uuw != 0 [
+     set t-values-sum (t-values-sum + (WR * uuw))
+     set weight-sum (weight-sum + uuw)
+     set rho-weight-sum (rho-weight-sum + WW)
+    ]
+  ]
+
+  if length certified-ratings > 0 [
+    let weights-CR []
+    let i 0
+    while [i != length certified-ratings][
+      let rating (item i certified-ratings)
+      let wR-cr (e ^ ((ticks - (item 2 rating)) / LAMBDA))
+      set weights-CR lput wR-cr weights-CR
+      set i (i + 1)
+    ]
+    let CR (TK certified-ratings weights-CR)
+    let Rho rho-K certified-ratings weights-CR CR
+    set RHO-C-SUM (RHO-C-SUM + Rho)
+    let uuc  (WC * Rho)
+    if uuc != 0 [
+     set t-values-sum (t-values-sum + (CR * uuc))
+     set weight-sum (weight-sum + uuc)
+     set rho-weight-sum (rho-weight-sum + WC)
+    ]
+  ]
+  set RHO-T-SUM (RHO-T-SUM + (weight-sum / rho-weight-sum))
+  report t-values-sum / weight-sum
+end
+
+to-report get-local-ratings [p]
+  let local-ratings []
+  foreach history [ r ->
+    if p = (item 0 r) [
+      set local-ratings lput r local-ratings
+    ]
+  ]
+  report local-ratings
+end
+
+to-report get-wr-ratings [p]
+  let wr-ratings []
+  let witnesses get-all-witness-ratings self [] p 0
+  foreach witnesses [ r ->
+    if p = (item 0 r) [
+      set wr-ratings lput r wr-ratings
+    ]
+  ]
+  report wr-ratings
+end
+
+to-report get-certified-ratings [p]
+  let return-value []
+  ask p [
+    set return-value history-c
+    if isliar? = true [
+      let history-lie []
+      foreach return-value[ r ->
+        set history-lie lput replace-item 1 r 1 history-lie
+      ]
+      set return-value history-lie
+    ]
+  ]
+  report return-value
+end
+
+to-report perform
+  let return-value 0
+  ifelse provider-type = INTERMITENT [
+    set return-value (random-float (PL-GOOD - PL-BAD)) + PL-BAD
+  ][
+    set return-value random-normal mu-p sigma-p
+  ]
+  ;; Clamp value between min and max
+  if return-value > 10 [ set return-value 10 ]
+  if return-value < -10 [ set return-value -10 ]
+  ;;calucating rating from my performance
+  let normalized-perform 2 * ((return-value - PL-WORST) / (PL-PERFECT - PL-WORST)) - 1
+  ifelse length history-c < H [
+    set history-c lput (list self normalized-perform ticks) history-c
+  ][
+    ;;removing lowest value to add this one
+    let min-history item 1 item 0 history-c
+    let min-index 0
+    let cpt 0
+    foreach history-c [ i ->
+      if item 1 i < min-history[
+        set min-history item 1 i
+        set min-index cpt
+      ]
+      set cpt cpt + 1
+    ]
+    if normalized-perform > min-history[
+      set history-c replace-item min-index history-c (list self normalized-perform ticks)
+    ]
+  ]
+  report return-value
+end
+@#$#@#$#@
+GRAPHICS-WINDOW
+0
+0
+245
+256
+-1
+-1
+5.0
+1
+10
+1
+1
+1
+0
+1
+1
+1
+-22
+22
+-22
+22
+-22
+22
+1
+1
+1
+ticks
+30.0
+
+BUTTON
+10
+20
+76
+53
+NIL
+setup
+NIL
+1
+T
+OBSERVER
+NIL
+NIL
+NIL
+NIL
+1
+
+BUTTON
+100
+60
+175
+93
+NIL
+go
+T
+1
+T
+OBSERVER
+NIL
+NIL
+NIL
+NIL
+0
+
+BUTTON
+10
+60
+95
+93
+go-once
+go
+NIL
+1
+T
+OBSERVER
+NIL
+NIL
+NIL
+NIL
+0
+
+SLIDER
+10
+145
+182
+178
+r0
+r0
+0
+20
+13.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+10
+185
+182
+218
+world-size
+world-size
+1
+22
+22.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+10
+265
+182
+298
+nb-consumers
+nb-consumers
+1
+500
+500.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+200
+105
+372
+138
+pCPC
+pCPC
+0
+1
+0.0
+0.1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+200
+140
+372
+173
+pPPC
+pPPC
+0
+1
+0.0
+0.1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+200
+195
+372
+228
+pPLC
+pPLC
+0
+1
+0.0
+0.1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+200
+230
+372
+263
+pCLC
+pCLC
+0
+1
+0.0
+0.1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+200
+270
+372
+303
+DeltaPHI
+DeltaPHI
+0
+360
+0.0
+1
+1
+NIL
+HORIZONTAL
+
+INPUTBOX
+210
+20
+260
+80
+H
+10.0
+1
+0
+Number
+
+INPUTBOX
+290
+20
+340
+80
+Npg
+10.0
+1
+0
+Number
+
+INPUTBOX
+345
+20
+395
+80
+Npo
+40.0
+1
+0
+Number
+
+INPUTBOX
+400
+20
+450
+80
+Npi
+5.0
+1
+0
+Number
+
+INPUTBOX
+455
+20
+505
+80
+Npb
+45.0
+1
+0
+Number
+
+SLIDER
+395
+105
+567
+138
+pmuC
+pmuC
+0
+1
+0.0
+0.1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+395
+140
+567
+173
+pProfileSwitch
+pProfileSwitch
+0
+1
+0.0
+0.1
+1
+NIL
+HORIZONTAL
+
+INPUTBOX
+605
+50
+670
+110
+min-alpha
+0.25
+1
+0
+Number
+
+TEXTBOX
+605
+20
+755
+45
+Range of consumer activity level
+10
+0.0
+1
+
+INPUTBOX
+670
+50
+735
+110
+max-alpha
+1.0
+1
+0
+Number
+
+TEXTBOX
+15
+235
+165
+261
+Number of consumers in each group
+10
+0.0
+1
+
+PLOT
+420
+260
+995
+545
+UG
+NIL
+NIL
+0.0
+200.0
+0.0
+7.0
+true
+true
+"" ""
+PENS
+"CONTROL" 1.0 0 -16777216 true "" "plot (UG-CONSUMER-FIREIT / NB-INTERACTION-FIREIT)"
+"WR" 1.0 0 -2674135 true "" "plot (UG-CONSUMER-FIREITWR / NB-INTERACTION-FIREITWR)"
+"CR" 1.0 0 -14439633 true "" "plot (UG-CONSUMER-FIREITCR / NB-INTERACTION-FIREITCR)"
+"FIRE" 1.0 0 -14454117 true "" "plot (UG-CONSUMER-FIRE / NB-INTERACTION-FIRE)"
+
+SLIDER
+15
+355
+185
+388
+WR_nBF
+WR_nBF
+1
+10
+2.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+15
+395
+187
+428
+WR_nRL
+WR_nRL
+1
+10
+5.0
+1
+1
+NIL
+HORIZONTAL
+
+TEXTBOX
+10
+325
+185
+351
+Variables specific to WR module
+11
+0.0
+1
+
+SWITCH
+270
+320
+373
+353
+WR?
+WR?
+1
+1
+-1000
+
+SWITCH
+270
+355
+373
+388
+CR?
+CR?
+1
+1
+-1000
+
+SWITCH
+270
+390
+373
+423
+IT?
+IT?
+0
+1
+-1000
+
+SWITCH
+270
+425
+373
+458
+FIRE?
+FIRE?
+1
+1
+-1000
+
+SLIDER
+15
+435
+187
+468
+liarProportion
+liarProportion
+0
+1
+0.0
+0.1
+1
+NIL
+HORIZONTAL
+
+PLOT
+785
+10
+1255
+225
+Reliability factors
+NIL
+NIL
+0.0
+200.0
+0.0
+1.0
+true
+true
+"" ""
+PENS
+"Rho-I" 1.0 0 -16777216 true "" "plot RHO-I-SUM / NB-EVAL"
+"Rho-W" 1.0 0 -2674135 true "" "plot RHO-W-SUM / NB-EVAL"
+"Rho-C" 1.0 0 -13840069 true "" "plot RHO-C-SUM / NB-EVAL"
+"Rho-T" 1.0 0 -14454117 true "" "plot RHO-T-SUM / NB-EVAL"
+
+MONITOR
+440
+200
+497
+245
+NIL
+NB-EVAL
+17
+1
+11
+
+@#$#@#$#@
+@#$#@#$#@
+default
+true
+0
+Polygon -7500403 true true 150 5 40 250 150 205 260 250
+
+airplane
+true
+0
+Polygon -7500403 true true 150 0 135 15 120 60 120 105 15 165 15 195 120 180 135 240 105 270 120 285 150 270 180 285 210 270 165 240 180 180 285 195 285 165 180 105 180 60 165 15
+
+arrow
+true
+0
+Polygon -7500403 true true 150 0 0 150 105 150 105 293 195 293 195 150 300 150
+
+box
+false
+0
+Polygon -7500403 true true 150 285 285 225 285 75 150 135
+Polygon -7500403 true true 150 135 15 75 150 15 285 75
+Polygon -7500403 true true 15 75 15 225 150 285 150 135
+Line -16777216 false 150 285 150 135
+Line -16777216 false 150 135 15 75
+Line -16777216 false 150 135 285 75
+
+bug
+true
+0
+Circle -7500403 true true 96 182 108
+Circle -7500403 true true 110 127 80
+Circle -7500403 true true 110 75 80
+Line -7500403 true 150 100 80 30
+Line -7500403 true 150 100 220 30
+
+butterfly
+true
+0
+Polygon -7500403 true true 150 165 209 199 225 225 225 255 195 270 165 255 150 240
+Polygon -7500403 true true 150 165 89 198 75 225 75 255 105 270 135 255 150 240
+Polygon -7500403 true true 139 148 100 105 55 90 25 90 10 105 10 135 25 180 40 195 85 194 139 163
+Polygon -7500403 true true 162 150 200 105 245 90 275 90 290 105 290 135 275 180 260 195 215 195 162 165
+Polygon -16777216 true false 150 255 135 225 120 150 135 120 150 105 165 120 180 150 165 225
+Circle -16777216 true false 135 90 30
+Line -16777216 false 150 105 195 60
+Line -16777216 false 150 105 105 60
+
+car
+false
+0
+Polygon -7500403 true true 300 180 279 164 261 144 240 135 226 132 213 106 203 84 185 63 159 50 135 50 75 60 0 150 0 165 0 225 300 225 300 180
+Circle -16777216 true false 180 180 90
+Circle -16777216 true false 30 180 90
+Polygon -16777216 true false 162 80 132 78 134 135 209 135 194 105 189 96 180 89
+Circle -7500403 true true 47 195 58
+Circle -7500403 true true 195 195 58
+
+circle
+false
+0
+Circle -7500403 true true 0 0 300
+
+circle 2
+false
+0
+Circle -7500403 true true 0 0 300
+Circle -16777216 true false 30 30 240
+
+cow
+false
+0
+Polygon -7500403 true true 200 193 197 249 179 249 177 196 166 187 140 189 93 191 78 179 72 211 49 209 48 181 37 149 25 120 25 89 45 72 103 84 179 75 198 76 252 64 272 81 293 103 285 121 255 121 242 118 224 167
+Polygon -7500403 true true 73 210 86 251 62 249 48 208
+Polygon -7500403 true true 25 114 16 195 9 204 23 213 25 200 39 123
+
+cylinder
+false
+0
+Circle -7500403 true true 0 0 300
+
+dot
+false
+0
+Circle -7500403 true true 90 90 120
+
+face happy
+false
+0
+Circle -7500403 true true 8 8 285
+Circle -16777216 true false 60 75 60
+Circle -16777216 true false 180 75 60
+Polygon -16777216 true false 150 255 90 239 62 213 47 191 67 179 90 203 109 218 150 225 192 218 210 203 227 181 251 194 236 217 212 240
+
+face neutral
+false
+0
+Circle -7500403 true true 8 7 285
+Circle -16777216 true false 60 75 60
+Circle -16777216 true false 180 75 60
+Rectangle -16777216 true false 60 195 240 225
+
+face sad
+false
+0
+Circle -7500403 true true 8 8 285
+Circle -16777216 true false 60 75 60
+Circle -16777216 true false 180 75 60
+Polygon -16777216 true false 150 168 90 184 62 210 47 232 67 244 90 220 109 205 150 198 192 205 210 220 227 242 251 229 236 206 212 183
+
+fish
+false
+0
+Polygon -1 true false 44 131 21 87 15 86 0 120 15 150 0 180 13 214 20 212 45 166
+Polygon -1 true false 135 195 119 235 95 218 76 210 46 204 60 165
+Polygon -1 true false 75 45 83 77 71 103 86 114 166 78 135 60
+Polygon -7500403 true true 30 136 151 77 226 81 280 119 292 146 292 160 287 170 270 195 195 210 151 212 30 166
+Circle -16777216 true false 215 106 30
+
+flag
+false
+0
+Rectangle -7500403 true true 60 15 75 300
+Polygon -7500403 true true 90 150 270 90 90 30
+Line -7500403 true 75 135 90 135
+Line -7500403 true 75 45 90 45
+
+flower
+false
+0
+Polygon -10899396 true false 135 120 165 165 180 210 180 240 150 300 165 300 195 240 195 195 165 135
+Circle -7500403 true true 85 132 38
+Circle -7500403 true true 130 147 38
+Circle -7500403 true true 192 85 38
+Circle -7500403 true true 85 40 38
+Circle -7500403 true true 177 40 38
+Circle -7500403 true true 177 132 38
+Circle -7500403 true true 70 85 38
+Circle -7500403 true true 130 25 38
+Circle -7500403 true true 96 51 108
+Circle -16777216 true false 113 68 74
+Polygon -10899396 true false 189 233 219 188 249 173 279 188 234 218
+Polygon -10899396 true false 180 255 150 210 105 210 75 240 135 240
+
+house
+false
+0
+Rectangle -7500403 true true 45 120 255 285
+Rectangle -16777216 true false 120 210 180 285
+Polygon -7500403 true true 15 120 150 15 285 120
+Line -16777216 false 30 120 270 120
+
+leaf
+false
+0
+Polygon -7500403 true true 150 210 135 195 120 210 60 210 30 195 60 180 60 165 15 135 30 120 15 105 40 104 45 90 60 90 90 105 105 120 120 120 105 60 120 60 135 30 150 15 165 30 180 60 195 60 180 120 195 120 210 105 240 90 255 90 263 104 285 105 270 120 285 135 240 165 240 180 270 195 240 210 180 210 165 195
+Polygon -7500403 true true 135 195 135 240 120 255 105 255 105 285 135 285 165 240 165 195
+
+line
+true
+0
+Line -7500403 true 150 0 150 300
+
+line half
+true
+0
+Line -7500403 true 150 0 150 150
+
+link
+true
+0
+Line -7500403 true 150 0 150 300
+
+link direction
+true
+0
+Line -7500403 true 150 150 30 225
+Line -7500403 true 150 150 270 225
+
+pentagon
+false
+0
+Polygon -7500403 true true 150 15 15 120 60 285 240 285 285 120
+
+person
+false
+0
+Circle -7500403 true true 110 5 80
+Polygon -7500403 true true 105 90 120 195 90 285 105 300 135 300 150 225 165 300 195 300 210 285 180 195 195 90
+Rectangle -7500403 true true 127 79 172 94
+Polygon -7500403 true true 195 90 240 150 225 180 165 105
+Polygon -7500403 true true 105 90 60 150 75 180 135 105
+
+plant
+false
+0
+Rectangle -7500403 true true 135 90 165 300
+Polygon -7500403 true true 135 255 90 210 45 195 75 255 135 285
+Polygon -7500403 true true 165 255 210 210 255 195 225 255 165 285
+Polygon -7500403 true true 135 180 90 135 45 120 75 180 135 210
+Polygon -7500403 true true 165 180 165 210 225 180 255 120 210 135
+Polygon -7500403 true true 135 105 90 60 45 45 75 105 135 135
+Polygon -7500403 true true 165 105 165 135 225 105 255 45 210 60
+Polygon -7500403 true true 135 90 120 45 150 15 180 45 165 90
+
+square
+false
+0
+Rectangle -7500403 true true 30 30 270 270
+
+square 2
+false
+0
+Rectangle -7500403 true true 30 30 270 270
+Rectangle -16777216 true false 60 60 240 240
+
+star
+false
+0
+Polygon -7500403 true true 151 1 185 108 298 108 207 175 242 282 151 216 59 282 94 175 3 108 116 108
+
+target
+false
+0
+Circle -7500403 true true 0 0 300
+Circle -16777216 true false 30 30 240
+Circle -7500403 true true 60 60 180
+Circle -16777216 true false 90 90 120
+Circle -7500403 true true 120 120 60
+
+tree
+false
+0
+Circle -7500403 true true 118 3 94
+Rectangle -6459832 true false 120 195 180 300
+Circle -7500403 true true 65 21 108
+Circle -7500403 true true 116 41 127
+Circle -7500403 true true 45 90 120
+Circle -7500403 true true 104 74 152
+
+triangle
+false
+0
+Polygon -7500403 true true 150 30 15 255 285 255
+
+triangle 2
+false
+0
+Polygon -7500403 true true 150 30 15 255 285 255
+Polygon -16777216 true false 151 99 225 223 75 224
+
+truck
+false
+0
+Rectangle -7500403 true true 4 45 195 187
+Polygon -7500403 true true 296 193 296 150 259 134 244 104 208 104 207 194
+Rectangle -1 true false 195 60 195 105
+Polygon -16777216 true false 238 112 252 141 219 141 218 112
+Circle -16777216 true false 234 174 42
+Rectangle -7500403 true true 181 185 214 194
+Circle -16777216 true false 144 174 42
+Circle -16777216 true false 24 174 42
+Circle -7500403 false true 24 174 42
+Circle -7500403 false true 144 174 42
+Circle -7500403 false true 234 174 42
+
+turtle
+true
+0
+Polygon -10899396 true false 215 204 240 233 246 254 228 266 215 252 193 210
+Polygon -10899396 true false 195 90 225 75 245 75 260 89 269 108 261 124 240 105 225 105 210 105
+Polygon -10899396 true false 105 90 75 75 55 75 40 89 31 108 39 124 60 105 75 105 90 105
+Polygon -10899396 true false 132 85 134 64 107 51 108 17 150 2 192 18 192 52 169 65 172 87
+Polygon -10899396 true false 85 204 60 233 54 254 72 266 85 252 107 210
+Polygon -7500403 true true 119 75 179 75 209 101 224 135 220 225 175 261 128 261 81 224 74 135 88 99
+
+wheel
+false
+0
+Circle -7500403 true true 3 3 294
+Circle -16777216 true false 30 30 240
+Line -7500403 true 150 285 150 15
+Line -7500403 true 15 150 285 150
+Circle -7500403 true true 120 120 60
+Line -7500403 true 216 40 79 269
+Line -7500403 true 40 84 269 221
+Line -7500403 true 40 216 269 79
+Line -7500403 true 84 40 221 269
+
+x
+false
+0
+Polygon -7500403 true true 270 75 225 30 30 225 75 270
+Polygon -7500403 true true 30 75 75 30 270 225 225 270
+@#$#@#$#@
+NetLogo 3D 6.0.4
+@#$#@#$#@
+set layout? false
+setup repeat 175 [ go ]
+repeat 35 [ layout ]
+@#$#@#$#@
+@#$#@#$#@
+@#$#@#$#@
+@#$#@#$#@
+default
+0.0
+-0.2 0 0.0 1.0
+0.0 1 1.0 0.0
+0.2 0 0.0 1.0
+link direction
+true
+0
+Line -7500403 true 150 150 90 180
+Line -7500403 true 150 150 210 180
+@#$#@#$#@
+1
+@#$#@#$#@
